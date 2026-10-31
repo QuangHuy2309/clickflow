@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ClickFlow Playground</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; color: #1b1d29; background: #f5f6fb; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .card { background: #fff; border: 1px solid #e2e5ee; border-radius: 12px; padding: 16px; margin: 16px 0; }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  input, select { padding: 8px 10px; border: 1px solid #cfd4e2; border-radius: 8px; width: 280px; font: inherit; }
+  button { padding: 8px 14px; border: 0; border-radius: 8px; background: #5b5bf0; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  .combo { position: relative; width: 280px; }
+  .combo-btn { width: 100%; text-align: left; background: #fff; color: #1b1d29; border: 1px solid #cfd4e2; }
+  .combo-list { position: absolute; left: 0; right: 0; top: 44px; max-height: 180px; overflow-y: auto; background: #fff; border: 1px solid #cfd4e2; border-radius: 8px; z-index: 5; }
+  .combo-list[hidden] { display: none; }
+  .opt { padding: 7px 10px; cursor: pointer; }
+  .opt:hover { background: #ecebff; }
+  #log li { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  #counter { font-weight: 700; }
+</style>
+</head>
+<body>
+  <h1>ClickFlow Playground</h1>
+  <p>A local page for trying every ClickFlow step type.</p>
+
+  <div class="card">
+    <button id="bump">Click me</button> Clicked <span id="counter">0</span> times
+  </div>
+
+  <form class="card" id="form">
+    <label for="name">Name</label>
+    <input id="name" name="name" placeholder="Full name">
+
+    <label for="country">Country (native select)</label>
+    <select id="country" name="country">
+      <option value="">Choose…</option>
+      <option value="vn">Vietnam</option>
+      <option value="jp">Japan</option>
+      <option value="fr">France</option>
+      <option value="us">United States</option>
+    </select>
+
+    <label>City (custom scroll list, loads more as you scroll)</label>
+    <div class="combo">
+      <button type="button" class="combo-btn" id="cityBtn">Pick a city…</button>
+      <div class="combo-list" id="cityList" role="listbox" hidden></div>
+    </div>
+
+    <p><button type="submit" id="submit">Submit</button></p>
+  </form>
+
+  <div class="card">
+    <strong>Submissions</strong>
+    <ol id="log"></ol>
+  </div>
+
+  <div style="height: 1200px"></div>
+  <p id="footer">Bottom of the page.</p>
+
+<script>
+  const CITIES = Array.from({ length: 300 }, (_, i) => `City ${i + 1}`)
+    .concat(['alice', 'bob', 'carol', 'Hanoi', 'Tokyo', 'Paris']);
+  const list = document.getElementById('cityList');
+  const btn = document.getElementById('cityBtn');
+  let loaded = 0;
+  let city = '';
+
+  function loadMore() {
+    for (const name of CITIES.slice(loaded, loaded + 25)) {
+      const d = document.createElement('div');
+      d.className = 'opt';
+      d.setAttribute('role', 'option');
+      d.textContent = name;
+      d.addEventListener('click', () => { city = name; btn.textContent = name; list.hidden = true; });
+      list.append(d);
+    }
+    loaded += 25;
+  }
+  loadMore();
+  btn.addEventListener('click', () => { list.hidden = !list.hidden; });
+  list.addEventListener('scroll', () => {
+    if (list.scrollTop + list.clientHeight >= list.scrollHeight - 5 && loaded < CITIES.length) setTimeout(loadMore, 200);
+  });
+
+  let count = 0;
+  document.getElementById('bump').addEventListener('click', () => {
+    document.getElementById('counter').textContent = ++count;
+  });
+
+  document.getElementById('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = document.getElementById('name').value;
+    const country = document.getElementById('country').value;
+    const li = document.createElement('li');
+    li.textContent = `name=${name} country=${country} city=${city}`;
+    document.getElementById('log').append(li);
+    document.getElementById('form').reset();
+    city = '';
+    btn.textContent = 'Pick a city…';
+  });
+</script>
+</body>
+</html>

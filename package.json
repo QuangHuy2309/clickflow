@@ -1,0 +1,17 @@
+{
+  "name": "clickflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev tooling for the ClickFlow Chrome extension (the extension itself has no dependencies).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "icons": "node scripts/make-icons.mjs",
+    "e2e": "node test/e2e.mjs",
+    "playground":"npx --yes http-server@14.1.1 test -p 5500 -c-1"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

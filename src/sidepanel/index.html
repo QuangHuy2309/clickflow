@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClickFlow</title>
+  <link rel="stylesheet" href="panel.css">
+  <script type="module" src="panel.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="../../icons/icon32.png" alt="" width="22" height="22">
+      <span>ClickFlow</span>
+    </div>
+    <div class="plan-switch">
+      <label class="sr-only" for="planSelect">Current plan</label>
+      <select id="planSelect"></select>
+      <div class="menu-wrap">
+        <button id="planMenuBtn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" title="Plan actions" aria-label="Plan actions"></button>
+        <div id="planMenu" class="menu menu-right" role="menu" hidden>
+          <button role="menuitem" data-action="new">New plan</button>
+          <button role="menuitem" data-action="rename">Rename</button>
+          <button role="menuitem" data-action="duplicate">Duplicate</button>
+          <hr>
+          <button role="menuitem" data-action="import">Import from file…</button>
+          <button role="menuitem" data-action="export">Export to file</button>
+          <hr>
+          <button role="menuitem" data-action="delete" class="danger">Delete plan</button>
+        </div>
+      </div>
+      <input id="importFile" type="file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div id="siteBanner" class="banner" hidden></div>
+
+  <main id="main">
+    <section class="card" aria-labelledby="stepsTitle">
+      <div class="section-head">
+        <h2 id="stepsTitle">Steps</h2>
+        <span id="stepCount" class="pill"></span>
+      </div>
+      <div id="emptyState" class="empty" hidden>
+        <div class="empty-art" aria-hidden="true"></div>
+        <p><strong>No steps yet</strong></p>
+        <p class="muted">Build your automation one block at a time, like clicking a button, typing text, or picking from a list.</p>
+      </div>
+      <ol id="blockList" class="blocks" aria-label="Steps"></ol>
+      <div class="menu-wrap add-wrap">
+        <button id="addBtn" class="btn btn-add" aria-haspopup="menu" aria-expanded="false"></button>
+        <div id="addMenu" class="menu add-menu" role="menu" hidden></div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="dataTitle">
+      <div class="section-head">
+        <h2 id="dataTitle">Data list</h2>
+        <span id="runCount" class="pill pill-accent"></span>
+      </div>
+      <p class="muted small">Each item is one run. Use <code>{{value}}</code> in any step to insert it.</p>
+      <div class="segmented" role="radiogroup" aria-label="Split items by" id="splitMode">
+        <button role="radio" data-value="auto">Auto</button>
+        <button role="radio" data-value="lines">One per line</button>
+        <button role="radio" data-value="comma">Comma</button>
+      </div>
+      <label class="sr-only" for="dataInput">Data list</label>
+      <textarea id="dataInput" rows="5" spellcheck="false" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com"></textarea>
+      <p class="hint"><span class="hint-icon" id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
+    </section>
+
+    <details class="card settings">
+      <summary><h2>Run settings</h2></summary>
+      <div class="grid">
+        <div class="field">
+          <label for="stepDelay">Delay between steps (ms)</label>
+          <input id="stepDelay" type="number" min="0" max="60000" step="50">
+        </div>
+        <div class="field">
+          <label for="runDelay">Delay between runs (ms)</label>
+          <input id="runDelay" type="number" min="0" max="600000" step="100">
+        </div>
+        <div class="field">
+          <label for="repeat">Repeat (when the data list is empty)</label>
+          <input id="repeat" type="number" min="1" max="10000">
+        </div>
+        <div class="field">
+          <label for="onError">If a step fails</label>
+          <select id="onError">
+            <option value="stop">Stop everything</option>
+            <option value="skip">Skip to the next run</option>
+          </select>
+        </div>
+      </div>
+    </details>
+  </main>
+
+  <footer class="runbar">
+    <div class="progress" aria-hidden="true"><div id="progressFill"></div></div>
+    <div class="runbar-row">
+      <div class="run-info">
+        <span id="runStatus" class="run-status" aria-live="polite">Ready</span>
+        <span id="siteChip" class="site-chip" hidden></span>
+      </div>
+      <div class="run-buttons">
+        <button id="pauseBtn" class="btn btn-ghost" hidden></button>
+        <button id="stopBtn" class="btn btn-danger" hidden></button>
+        <button id="runBtn" class="btn btn-primary"></button>
+      </div>
+    </div>
+  </footer>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="modal" class="modal"></dialog>
+</body>
+</html>
