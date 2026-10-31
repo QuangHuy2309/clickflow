@@ -51,8 +51,10 @@ const code = await new Promise((resolve, reject) => {
     })) auth.searchParams.set(k, v);
     console.log('Sign in with the publisher account (lqhuy2309@gmail.com) in the browser that opens, then click Allow.');
     console.log(`If no browser opens, open this URL:\n${auth}\n`);
-    spawn(process.platform === 'win32' ? 'cmd' : 'xdg-open', process.platform === 'win32' ? ['/c', 'start', '', auth.href] : [auth.href],
-      { stdio: 'ignore', detached: true }).unref();
+    // Not `cmd /c start`: cmd treats each & in the URL as a command separator.
+    const [cmd, args] = process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', auth.href]]
+      : process.platform === 'darwin' ? ['open', [auth.href]] : ['xdg-open', [auth.href]];
+    spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
   });
   setTimeout(() => { server.close(); reject(new Error('Timed out after 5 minutes.')); }, 300000).unref();
   globalThis.redirectOf = () => server.redirect;
