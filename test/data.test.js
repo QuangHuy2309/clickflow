@@ -159,7 +159,8 @@ test('sanitizePlan drops unknown types and keys, clamps values', () => {
   assert.equal(plan.onError, 'stop');
   assert.equal(plan.blocks.length, 2);
   assert.equal(plan.blocks[0].onclick, undefined);
-  assert.equal(plan.blocks[0].timeout, 120000);
+  assert.equal(plan.blocks[0].timeout, undefined, 'steps no longer have their own timeout');
+  assert.equal(plan.timeout, LIMITS.timeout[1], 'the old step timeout moves to the plan, clamped');
   assert.equal(plan.blocks[1].selector.length, LIMITS.selector);
   assert.equal(plan.blocks[1].text, '');
 });
@@ -172,4 +173,17 @@ test('sanitizePlan caps block count and regenerates ids when fresh', () => {
   assert.notEqual(plan.id, 'keep');
   assert.notEqual(plan.datasets[0].id, 'ds-1');
   assert.equal(new Set(plan.blocks.map((b) => b.id)).size, LIMITS.blocks);
+});
+
+test('sanitizePlan: one shared element timeout, migrated from old per-step timeouts', () => {
+  assert.equal(sanitizePlan({ blocks: [] }).plan.timeout, 5000, 'default');
+  assert.equal(sanitizePlan({ timeout: 8000, blocks: [{ type: 'click', selector: '#a', timeout: 2000 }] }).plan.timeout, 8000, 'plan value wins');
+  const old = sanitizePlan({ blocks: [
+    { type: 'click', selector: '#a', timeout: 3000 },
+    { type: 'type', selector: '#b', timeout: 3000 },
+    { type: 'click', selector: '#c', timeout: 20000 },
+  ] }).plan;
+  assert.equal(old.timeout, 3000, 'the value most steps used');
+  assert.equal(sanitizePlan({ blocks: [{ type: 'click', selector: '#a', timeout: 2000 }, { type: 'click', selector: '#b', timeout: 9000 }] }).plan.timeout, 9000, 'tie: the longer one');
+  assert.equal(sanitizePlan({ timeout: 1 }).plan.timeout, LIMITS.timeout[0], 'clamped');
 });

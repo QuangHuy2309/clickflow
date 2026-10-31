@@ -44,8 +44,17 @@ async function pressEnterInPage(selector) {
 const CAPTURE_GAP_MS = 550;
 // How long to wait for a click/submit to start a navigation before moving on.
 const NAV_GRACE_MS = 40;
+// Most a new page may take to show its content before the next step starts
+// anyway (that step still waits for its own element).
+const PAGE_LOAD_MAX_MS = 15000;
+// Extra time a page call gets beyond the step's own timeout before it counts
+// as hung (a frozen or crashed page never answers).
+const CALL_SLACK_MS = 5000;
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+class Stopped extends Error {}
+class Hung extends Error {}
 
 export class Runner {
   constructor(hooks = {}) {
@@ -55,6 +64,8 @@ export class Runner {
     this._wake = null;
     this._lastCapture = 0;
     this._navigating = false;
+    this._pausedMs = 0;
+    this._pausedAt = 0;
     this._onTabUpdated = (tabId, info) => {
       if (tabId === this.tabId && info.status === 'loading') this._navigating = true;
     };
@@ -68,6 +79,7 @@ export class Runner {
     if (this.busy) return;
     const blocks = plan.blocks.filter((b) => b.enabled);
     if (!blocks.length) throw new Error('Add at least one enabled step first.');
+    const timeout = plan.timeout || 5000;
     for (const b of blocks) {
       const problem = validateBlock(b);
       if (problem) {
@@ -84,6 +96,8 @@ export class Runner {
     this.tabId = tabId;
     this.status = 'running';
     this._stopped = false;
+    this._pausedMs = 0;
+    this._stopSignal = new Promise((resolve) => { this._onStop = resolve; });
     chrome.tabs.onUpdated.addListener(this._onTabUpdated);
     this._emitStatus();
     const summary = { runs: values.length, ok: 0, failed: 0, stopped: false, ms: 0 };
@@ -95,20 +109,22 @@ export class Runner {
         for (let s = 0; s < blocks.length; s++) {
           if (!(await this._checkpoint())) break outer;
           const block = blocks[s];
-          const step = templateBlock(block, values[r], r);
+          const step = { ...templateBlock(block, values[r], r), timeout };
           const info = { run: r, runs: values.length, step: s, steps: blocks.length, blockId: block.id };
           this.hooks.onProgress?.(info);
           const t0 = performance.now();
+          const paused0 = this._pausedMs;
           const label = `Run ${r + 1}/${values.length} · Step ${s + 1}/${blocks.length} · ${BLOCK_TYPES[block.type].label}`;
           let res = await this._execute(step, label, info);
           // A retry changes something: it waits twice as long for the element.
           for (let attempt = 1; !res.ok && !this._stopped && attempt <= (plan.retries || 0); attempt++) {
             this.hooks.onRetry?.({ ...info, block: step, attempt, error: res.error });
-            const longer = 'timeout' in step ? { ...step, timeout: Math.min(step.timeout * 2 ** attempt, 120000) } : step;
-            res = await this._execute(longer, label, info);
+            res = await this._execute({ ...step, timeout: Math.min(timeout * 2 ** attempt, 240000) }, label, info);
           }
           if (this._stopped) break outer;
-          this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms: Math.round(performance.now() - t0) });
+          // Time spent paused isn't the step's fault, so it isn't counted.
+          const ms = Math.round(performance.now() - t0 - (this._pausedMs - paused0));
+          this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms, loadMs: res.loadMs });
           if (!res.ok) {
             failed = true;
             summary.failed++;
@@ -125,7 +141,7 @@ export class Runner {
       chrome.tabs.onUpdated.removeListener(this._onTabUpdated);
       summary.stopped = this._stopped;
       summary.ms = Math.round(performance.now() - started);
-      await this._page('setBadge', false);
+      this._page('setBadge', false); // no need to wait on a busy page
       this.status = 'idle';
       this.tabId = null;
       this._emitStatus();
@@ -133,22 +149,32 @@ export class Runner {
     }
   }
 
+  // Pause takes effect at once: the current step's element wait freezes
+  // (its clock too) and the plan holds before the next step.
   pause() {
     if (this.status !== 'running') return;
     this.status = 'paused';
+    this._pausedAt = performance.now();
+    this._page('pause', true);
     this._emitStatus();
   }
 
   resume() {
     if (this.status !== 'paused') return;
     this.status = 'running';
+    this._pausedMs += performance.now() - this._pausedAt;
+    this._page('pause', false);
     this._emitStatus();
     this._wake?.();
   }
 
+  // Stop takes effect at once: whatever the runner is waiting on is
+  // abandoned, and the page's current step is told to give up.
   stop() {
-    if (!this.busy) return;
+    if (!this.busy || this._stopped) return;
     this._stopped = true;
+    if (this.status === 'paused') this._pausedMs += performance.now() - this._pausedAt;
+    this._onStop();
     this._wake?.();
     this._page('abort');
   }
@@ -171,18 +197,52 @@ export class Runner {
     });
   }
 
+  // Resolves with the promise's value, but rejects with Stopped as soon as
+  // Stop is pressed, or with Hung after `limit` ms (paused time not counted).
+  async _guard(promise, limit = 0) {
+    let timer;
+    const started = performance.now();
+    const paused0 = this._pausedMs;
+    const hung = new Promise((_, reject) => {
+      const check = () => {
+        const left = limit - (performance.now() - started - (this._pausedMs - paused0));
+        if (this.status === 'paused') timer = setTimeout(check, 250);
+        else if (left > 0) timer = setTimeout(check, left);
+        else reject(new Hung());
+      };
+      if (limit) timer = setTimeout(check, limit);
+    });
+    const stopped = this._stopSignal.then(() => { throw new Stopped(); });
+    stopped.catch(() => {}); // may reject after the race is already settled
+    try {
+      return await Promise.race([promise, stopped, hung]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // Calls window.__clickflow[method] in the page, injecting actions.js only
   // when this page doesn't have it yet (once per page load, not per step).
-  async _callPage(method, args) {
+  // injectImmediately: steps wait for their own elements, so there's no
+  // reason to wait for Chrome's "document idle" (after images and ads).
+  // Each call also carries the pause state, in case Pause was pressed while
+  // actions.js was still being injected.
+  async _callPage(method, args, limit) {
     const target = { tabId: this.tabId };
-    const call = () => chrome.scripting.executeScript({
+    const call = () => this._guard(chrome.scripting.executeScript({
       target,
-      func: (m, a) => (window.__clickflow ? window.__clickflow[m](...a) : { missing: true }),
-      args: [method, args],
-    });
+      injectImmediately: true,
+      func: (m, a, paused) => {
+        const cf = window.__clickflow;
+        if (!cf) return { missing: true };
+        cf.pause(paused);
+        return cf[m](...a);
+      },
+      args: [method, args, this.status === 'paused'],
+    }), limit);
     let [res] = await call();
     if (res?.result?.missing) {
-      await chrome.scripting.executeScript({ target, files: [ACTIONS_FILE] });
+      await this._guard(chrome.scripting.executeScript({ target, injectImmediately: true, files: [ACTIONS_FILE] }), limit);
       [res] = await call();
     }
     return res?.result ?? { ok: false, error: 'The page did not respond.' };
@@ -195,46 +255,70 @@ export class Runner {
     }
     if (block.type === 'screenshot') return this._screenshot(block, label, info);
     this._navigating = false;
+    // Select steps can wait for the opener, then the list, then scroll.
+    const limit = block.timeout * (block.type === 'select' ? 3 : 1) + CALL_SLACK_MS;
     try {
       let result;
       try {
-        result = await this._callPage('run', [block, label]);
+        result = await this._callPage('run', [block, label], limit);
       } catch (e) {
         // The previous step's navigation can still be tearing the old page
-        // down; wait for the new page and try once more.
-        if (!/frame|navigat|document|closed|context/i.test(e.message)) throw e;
-        await this._waitForLoad(true);
-        result = await this._callPage('run', [block, label]);
+        // down, or the page froze; wait for a ready page and try once more.
+        if (e instanceof Stopped || !(e instanceof Hung || /frame|navigat|document|closed|context/i.test(e.message))) throw e;
+        await this._settle(null);
+        result = await this._callPage('run', [block, label], limit);
       }
       if (result.ok && block.type === 'type' && block.enter) {
         // A navigation triggered by Enter can tear the frame down mid-call; that's success.
-        await chrome.scripting.executeScript({ target: { tabId: this.tabId }, world: 'MAIN', func: pressEnterInPage, args: [block.selector] })
-          .catch(() => {});
+        await this._guard(chrome.scripting.executeScript({
+          target: { tabId: this.tabId }, world: 'MAIN', injectImmediately: true, func: pressEnterInPage, args: [block.selector],
+        }), CALL_SLACK_MS).catch((e) => { if (e instanceof Stopped) throw e; });
       }
       // Only steps that can trigger a navigation pay for the navigation check.
       const canNavigate = block.type === 'click' || block.type === 'select' || (block.type === 'type' && block.enter);
-      if (canNavigate) await this._waitForLoad();
+      if (canNavigate) result.loadMs = await this._settle(result.doc);
       return result;
     } catch (e) {
+      if (e instanceof Stopped) return { ok: false, error: 'Stopped.' };
+      if (e instanceof Hung) return { ok: false, error: 'The page stopped responding. Try reloading it.' };
       return { ok: false, error: friendlyError(e.message) };
     }
   }
 
   // If the step started a navigation (seen as a "loading" tab update), wait
-  // until the new page has loaded. Otherwise return almost immediately.
-  async _waitForLoad(force = false) {
-    for (let waited = 0; !force && !this._navigating && waited < NAV_GRACE_MS; waited += 10) await sleepMs(10);
-    if (!force && !this._navigating) {
-      const tab = await chrome.tabs.get(this.tabId);
-      if (tab.status !== 'loading') return;
+  // until the new page's content is ready, and return the ms spent waiting.
+  // This doesn't wait for every image, ad and tracker to finish (the tab's
+  // "complete" status), which can take 30 s or more on busy sites.
+  // `doc` is the id of the page the step ran in; null means any page will do.
+  async _settle(doc) {
+    const t0 = performance.now();
+    const probe = () => this._guard(chrome.scripting.executeScript({
+      target: { tabId: this.tabId },
+      injectImmediately: true,
+      func: () => ({ doc: window.__clickflow?.doc ?? null, state: document.readyState }),
+    }), 1000).then(([r]) => r?.result, (e) => { if (e instanceof Stopped) throw e; return null; });
+    for (let waited = 0; doc && !this._navigating && waited < NAV_GRACE_MS; waited += 10) await sleepMs(10);
+    if (doc && !this._navigating) {
+      if ((await chrome.tabs.get(this.tabId)).status !== 'loading') return 0;
+      // The tab can say "loading" only because the page is still fetching
+      // images; if the step's own page is still there, carry on.
+      const page = await probe();
+      if (page?.doc === doc && page.state !== 'loading') return 0;
     }
-    const end = Date.now() + 30000;
-    while (Date.now() < end && !this._stopped) {
-      const tab = await chrome.tabs.get(this.tabId);
-      if (tab.status === 'complete') break;
-      await sleepMs(100);
+    let waited = 0;
+    while (waited < PAGE_LOAD_MAX_MS) {
+      const t = performance.now();
+      if (this.status !== 'paused') {
+        if ((await chrome.tabs.get(this.tabId)).status === 'complete') break;
+        // A different page whose HTML has been read is ready for the next step.
+        const page = await probe();
+        if (page && page.state !== 'loading' && (!doc || page.doc !== doc)) break;
+      }
+      await this._guard(sleepMs(100));
+      if (this.status !== 'paused') waited += performance.now() - t;
     }
     this._navigating = false;
+    return Math.round(performance.now() - t0);
   }
 
   async _screenshot(block, label, info) {
@@ -243,39 +327,47 @@ export class Runner {
       if (!tab.active) return { ok: false, error: 'Switch to the tab being automated: screenshots capture the visible tab.' };
       let crop = null;
       if (block.selector) {
-        const m = await this._callPage('measure', [block]);
+        const m = await this._callPage('measure', [block], block.timeout + CALL_SLACK_MS);
         if (!m.ok) return m;
         crop = m;
       }
       await this._page('setBadge', false); // keep the badge out of the picture
       const wait = this._lastCapture + CAPTURE_GAP_MS - Date.now();
-      if (wait > 0) await sleepMs(wait);
+      if (wait > 0) await this._guard(sleepMs(wait));
       let dataUrl;
       try {
-        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        dataUrl = await this._guard(chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }));
       } finally {
         this._lastCapture = Date.now();
-        this._page('setBadge', true, label);
+        if (!this._stopped) this._page('setBadge', true, label);
       }
       let blob = await (await fetch(dataUrl)).blob();
       if (crop) blob = await cropImage(blob, crop);
       this.hooks.onScreenshot?.({ ...info, name: block.name || `screenshot-${info.run + 1}`, blob });
       return { ok: true };
     } catch (e) {
+      if (e instanceof Stopped) return { ok: false, error: 'Stopped.' };
+      if (e instanceof Hung) return { ok: false, error: 'The page stopped responding. Try reloading it.' };
       return { ok: false, error: /permission|activeTab|all_urls/i.test(e.message)
         ? "ClickFlow isn't allowed to capture this page. Allow it on this site and try again."
         : friendlyError(e.message) };
     }
   }
 
+  // Fire-and-forget page calls (badge, pause, abort). Bounded so a frozen
+  // page can't hold anything up.
   async _page(method, ...args) {
     if (this.tabId == null) return;
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: this.tabId },
-        func: (m, a) => window.__clickflow?.[m]?.(...a),
-        args: [method, args],
-      });
+      await Promise.race([
+        chrome.scripting.executeScript({
+          target: { tabId: this.tabId },
+          injectImmediately: true,
+          func: (m, a) => window.__clickflow?.[m]?.(...a),
+          args: [method, args],
+        }),
+        sleepMs(2000),
+      ]);
     } catch { /* tab gone or no access; nothing to clean up */ }
   }
 }

@@ -27,7 +27,7 @@ ClickFlow has no content scripts that run on every page, and its service worker 
   - The panel accepts recorded steps only from the recording tab and only with the current session ID. Each step goes through the same schema sanitizer as an import.
 - **Screenshots stay local.** Captured images are kept in the side panel's memory and are discarded when it closes. They're saved only when you press Download, and never uploaded. The page badge is hidden while capturing.
 - **Enter from the page context.** To press Enter in a way page scripts recognize (`keyCode` 13), ClickFlow runs one small bundled function in the page's main world. It only dispatches key events to the step's field and submits that field's form if nothing reacted.
-- **Bounded execution.** A run can have at most 10,000 iterations and 200 steps, and every wait has a timeout. Stop, Pause, and Esc on the page all work while a run is in progress.
+- **Bounded execution.** A run can have at most 10,000 iterations and 200 steps, and every wait has a timeout. Every call into the page has a time limit, so a frozen page can't hang a run. Stop, Pause, and Esc on the page take effect immediately, even mid-step.
 - **One target tab.** A run is locked to the tab it started in.
 - **Restricted pages.** ClickFlow refuses to run on `chrome://` pages, other internal browser pages, and the Chrome Web Store. It runs on local `file://` pages only if you enable that yourself.
 - **On-page UI is isolated.** The picker overlay and the running badge live in a closed shadow root, so the page's scripts can't restyle them or read them through the DOM.

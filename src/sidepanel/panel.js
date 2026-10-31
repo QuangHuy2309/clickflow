@@ -716,13 +716,14 @@ function renderSettings() {
   $('whenShort').value = p.whenShort;
   $('stepDelay').value = p.stepDelay;
   $('runDelay').value = p.runDelay;
+  $('timeout').value = p.timeout;
   $('onError').value = p.onError;
   $('retries').value = String(p.retries);
   updateRunCount();
 }
 
 function bindSettings() {
-  const nums = { stepDelay: [0, 60000], runDelay: [0, 600000] };
+  const nums = { stepDelay: [0, 60000], runDelay: [0, 600000], timeout: LIMITS.timeout };
   for (const [key, [min, max]] of Object.entries(nums)) {
     $(key).addEventListener('change', (e) => {
       const n = Math.round(Number(e.target.value));
@@ -780,12 +781,18 @@ function logRetry({ run, step, block, attempt, error }) {
     h('span', { class: 'log-ms' }, '')));
 }
 
-function logStep({ run, step, block, ok, error, ms }) {
+const duration = (ms) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+// loadMs: time spent waiting for the page the step opened, so slow sites
+// aren't mistaken for slow steps.
+function logStep({ run, step, block, ok, error, ms, loadMs }) {
   if (block.type === 'screenshot' && ok) return; // logged with its image by logShot
   logAppend(h('li', { class: `log-item ${ok ? 'ok' : 'err'}` },
     icon(ok ? 'check' : 'alert', 14),
-    h('span', { class: 'log-text' }, where(run, step), summarize(block), !ok && h('span', { class: 'log-err' }, error)),
-    h('span', { class: 'log-ms' }, `${ms} ms`)));
+    h('span', { class: 'log-text' }, where(run, step), summarize(block),
+      !ok && h('span', { class: 'log-err' }, error),
+      ok && loadMs >= 500 && h('span', { class: 'log-note' }, `${duration(loadMs)} of it waiting for the next page to load`)),
+    h('span', { class: 'log-ms' }, duration(ms))));
 }
 
 function downloadShot(shot) {
@@ -821,6 +828,60 @@ function logShot({ run, step, name, blob }) {
     h('span', { class: 'log-ms' }, `${Math.round(blob.size / 1024)} KB`)));
 }
 
+// The log's height is dragged from its top edge and remembered.
+const LOG_HEIGHT_KEY = 'clickflow.logHeight';
+
+function setLogHeight(px, remember = true) {
+  const panel = $('logPanel');
+  if (px == null) {
+    panel.style.height = '';
+    panel.classList.remove('sized');
+  } else {
+    const max = Math.max(120, window.innerHeight - 170);
+    px = Math.round(Math.min(max, Math.max(90, px)));
+    panel.style.height = `${px}px`;
+    panel.classList.add('sized');
+  }
+  if (remember) {
+    try { px == null ? localStorage.removeItem(LOG_HEIGHT_KEY) : localStorage.setItem(LOG_HEIGHT_KEY, String(px)); } catch { /* storage off */ }
+  }
+}
+
+function bindLogResize() {
+  const grip = $('logResize');
+  const panel = $('logPanel');
+  try {
+    const saved = Number(localStorage.getItem(LOG_HEIGHT_KEY));
+    if (saved) setLogHeight(saved, false);
+  } catch { /* storage off */ }
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = panel.getBoundingClientRect().height;
+    panel.classList.add('resizing');
+    const move = (ev) => setLogHeight(startH + (startY - ev.clientY), false);
+    const up = (ev) => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      panel.classList.remove('resizing');
+      setLogHeight(startH + (startY - ev.clientY));
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => setLogHeight(null));
+  grip.addEventListener('keydown', (e) => {
+    const step = e.key === 'ArrowUp' ? 24 : e.key === 'ArrowDown' ? -24 : 0;
+    if (!step) return;
+    e.preventDefault();
+    setLogHeight(panel.getBoundingClientRect().height + step);
+  });
+}
+
 function showLog(open) {
   $('logPanel').hidden = !open;
   $('logBtn').setAttribute('aria-pressed', String(open));
@@ -841,6 +902,7 @@ function bindLog() {
   $('logBtn').addEventListener('click', () => showLog($('logPanel').hidden));
   $('logClose').addEventListener('click', () => showLog(false));
   $('logClear').addEventListener('click', clearLog);
+  bindLogResize();
   // Chrome may ask once to allow multiple downloads from the extension.
   $('logDownloadAll').addEventListener('click', async () => {
     for (const s of shots) {

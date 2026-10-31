@@ -7,7 +7,11 @@
   class StepError extends Error {}
 
   let aborted = false;
+  let paused = false;
   let ui = null;
+  // Identifies this document, so the runner can tell when a navigation has
+  // replaced it with a new page.
+  const doc = Math.random().toString(36).slice(2);
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -26,6 +30,12 @@
     if (aborted) throw new StepError('Stopped.');
   }
 
+  // Pause holds a step where it is (between scroll attempts, say).
+  async function holdWhilePaused() {
+    while (paused && !aborted) await sleep(100);
+    checkAbort();
+  }
+
   const CLICKABLE = 'a,button,summary,label,li,[role=button],[role=link],[role=option],[role=menuitem],[role=tab],input[type=submit],input[type=button]';
 
   // Backup for Click steps whose selector no longer matches (sites that
@@ -39,8 +49,9 @@
     return null;
   }
 
-  // Resolves as soon as the element shows up (MutationObserver), with a slow
-  // poll as a safety net for visibility changes that aren't DOM mutations.
+  // Resolves as soon as the element shows up (MutationObserver), with a poll
+  // as a safety net for visibility changes that aren't DOM mutations. Time
+  // spent paused doesn't count toward the timeout.
   function waitFor(selector, timeout, { visible = false, gone = false, fallbackText = '' } = {}) {
     const check = () => {
       checkAbort();
@@ -58,7 +69,6 @@
         done = true;
         observer.disconnect();
         clearInterval(poll);
-        clearTimeout(timer);
         fn(value);
       };
       const retry = () => {
@@ -69,18 +79,28 @@
           finish(reject, e);
         }
       };
-      const observer = new MutationObserver(retry);
+      const observer = new MutationObserver(() => { if (!paused) retry(); });
       observer.observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'],
       });
-      const poll = setInterval(retry, 250);
-      const timer = setTimeout(() => {
+      let left = timeout;
+      let last = Date.now();
+      const poll = setInterval(() => {
+        const now = Date.now();
+        if (!paused) left -= now - last;
+        last = now;
+        if (aborted) return finish(reject, new StepError('Stopped.'));
+        if (paused) return;
+        retry();
+        if (left <= 0) timedOut();
+      }, 100);
+      const timedOut = () => {
         let message;
         if (gone) message = `"${selector}" was still on the page after ${timeout} ms.`;
         else if (visible && query(selector)) message = `"${selector}" is on the page but stayed hidden for ${timeout} ms.`;
         else message = `Couldn't find "${selector}"${fallbackText ? ` or an element with the text “${fallbackText}”` : ''} within ${timeout} ms.`;
         finish(reject, new StepError(message));
-      }, timeout);
+      };
     });
   }
 
@@ -278,7 +298,7 @@
     const scroller = scrollableIn(el);
     let stuck = 0;
     for (let i = 0; i <= b.maxScrolls; i++) {
-      checkAbort();
+      await holdWhilePaused();
       const item = findItem(el, target, b.matchMode, b.item);
       if (item) {
         item.scrollIntoView({ block: 'nearest' });
@@ -317,6 +337,7 @@
   async function run(b, label) {
     aborted = false;
     setBadge(true, label);
+    const t0 = Date.now();
     try {
       switch (b.type) {
         case 'click':
@@ -338,17 +359,19 @@
         default:
           throw new StepError('Unknown step type.');
       }
-      return { ok: true };
+      return { ok: true, doc, ms: Date.now() - t0 };
     } catch (e) {
-      return { ok: false, error: e instanceof StepError ? e.message : `Unexpected error: ${e.message}` };
+      return { ok: false, doc, error: e instanceof StepError ? e.message : `Unexpected error: ${e.message}` };
     }
   }
 
   window.__clickflow = {
+    doc,
     run,
     measure,
     highlight,
     abort() { aborted = true; },
+    pause(on) { paused = on; },
     setBadge,
   };
 })();

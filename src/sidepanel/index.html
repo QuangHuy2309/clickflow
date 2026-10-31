@@ -113,12 +113,8 @@
         <div class="section-head"><h2>Timing &amp; errors</h2></div>
         <div class="grid">
           <div class="field">
-            <label for="stepDelay">Delay between steps (ms)</label>
-            <input id="stepDelay" type="number" min="0" max="60000" step="50">
-          </div>
-          <div class="field">
-            <label for="runDelay">Delay between runs (ms)</label>
-            <input id="runDelay" type="number" min="0" max="600000" step="100">
+            <label for="timeout">Wait for elements up to (ms)</label>
+            <input id="timeout" type="number" min="500" max="120000" step="500" aria-describedby="retriesHint">
           </div>
           <div class="field">
             <label for="retries">Retry a failed step</label>
@@ -129,6 +125,15 @@
               <option value="3">3 times</option>
             </select>
           </div>
+          <small id="retriesHint" class="muted span-2">How long each step looks for its element before it fails. Each retry waits twice as long as the last try.</small>
+          <div class="field">
+            <label for="stepDelay">Delay between steps (ms)</label>
+            <input id="stepDelay" type="number" min="0" max="60000" step="50">
+          </div>
+          <div class="field">
+            <label for="runDelay">Delay between runs (ms)</label>
+            <input id="runDelay" type="number" min="0" max="600000" step="100">
+          </div>
           <div class="field">
             <label for="onError">If a step still fails</label>
             <select id="onError">
@@ -136,13 +141,13 @@
               <option value="skip">Skip to the next run</option>
             </select>
           </div>
-          <small id="retriesHint" class="muted span-2">Each retry waits twice as long for the element as the last try.</small>
         </div>
       </div>
     </section>
   </main>
 
   <section id="logPanel" class="log-panel" hidden aria-label="Activity log">
+    <div id="logResize" class="log-resize" role="separator" aria-orientation="horizontal" aria-label="Resize the log" title="Drag to resize · double-click to reset" tabindex="0"></div>
     <div class="log-head">
       <strong>Activity</strong>
       <span id="logSummary" class="log-summary"></span>

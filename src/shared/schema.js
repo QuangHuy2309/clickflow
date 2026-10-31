@@ -12,6 +12,8 @@ export const LIMITS = {
   datasets: 20,
   dataName: 30,
   runs: 10000,
+  // How long a step waits for its element (Settings; one value for all steps).
+  timeout: [500, 120000],
   importBytes: 1000000,
 };
 
@@ -21,7 +23,6 @@ const textarea = (key, label, def, extra = {}) => ({ key, label, kind: 'textarea
 const number = (key, label, def, min, max, extra = {}) => ({ key, label, kind: 'number', default: def, min, max, ...extra });
 const bool = (key, label, def, extra = {}) => ({ key, label, kind: 'bool', default: def, ...extra });
 const choice = (key, label, options, def, extra = {}) => ({ key, label, kind: 'enum', options, default: def, ...extra });
-const timeout = (extra = {}) => number('timeout', 'Wait for element up to (ms)', 5000, 0, 120000, extra);
 
 export const BLOCK_TYPES = {
   click: {
@@ -37,7 +38,6 @@ export const BLOCK_TYPES = {
         maxLen: 200,
         hint: 'A backup for sites that change their element names. Filled in automatically when you record.',
       }),
-      timeout(),
     ],
   },
   type: {
@@ -47,7 +47,6 @@ export const BLOCK_TYPES = {
       textarea('text', 'Text', '', { variable: true, hint: 'Tip: {{index}} inserts the run number' }),
       bool('clear', 'Clear the field first', true),
       bool('enter', 'Press Enter after typing', false),
-      timeout(),
     ],
   },
   select: {
@@ -62,7 +61,6 @@ export const BLOCK_TYPES = {
       ], 'exact'),
       selector('item', 'Item selector (optional)', { hint: 'Leave empty to match any element in the list' }),
       number('maxScrolls', 'Max scroll attempts', 300, 1, 5000),
-      timeout(),
     ],
   },
   wait: {
@@ -75,7 +73,6 @@ export const BLOCK_TYPES = {
       ], 'time'),
       number('ms', 'Duration (ms)', 1000, 0, 600000, { show: (b) => b.mode === 'time' }),
       selector('selector', 'Element', { show: (b) => b.mode !== 'time', required: (b) => b.mode !== 'time' }),
-      number('timeout', 'Give up after (ms)', 10000, 0, 600000, { show: (b) => b.mode !== 'time' }),
     ],
   },
   scroll: {
@@ -90,7 +87,6 @@ export const BLOCK_TYPES = {
         required: (b) => b.mode === 'into-view',
       }),
       number('amount', 'Pixels (negative scrolls up)', 500, -100000, 100000, { show: (b) => b.mode === 'by' }),
-      timeout({ show: (b) => Boolean(b.selector) }),
     ],
   },
   screenshot: {
@@ -98,7 +94,6 @@ export const BLOCK_TYPES = {
     fields: [
       selector('selector', 'Element (optional)', { hint: 'Leave empty to capture the visible page' }),
       text('name', 'File name', 'screenshot-{{index}}', { hint: '{{index}} = run number; data sets work too' }),
-      timeout({ show: (b) => Boolean(b.selector) }),
     ],
   },
 };
@@ -154,6 +149,7 @@ export function newPlan(name = 'Untitled plan') {
     whenShort: 'cycle',
     stepDelay: 100,
     runDelay: 300,
+    timeout: 5000,
     retries: 1,
     onError: 'stop',
   };
@@ -265,6 +261,19 @@ function sanitizeDatasets(raw) {
   return datasets;
 }
 
+// Steps used to have their own timeout (v1.1 and older). Keep the one most
+// steps used, preferring the longer on a tie.
+function legacyTimeout(rawBlocks) {
+  const counts = new Map();
+  for (const b of rawBlocks) {
+    const t = Number(b?.timeout);
+    if (Number.isFinite(t) && t > 0) counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  let best;
+  for (const [t, n] of counts) if (best === undefined || n > counts.get(best) || (n === counts.get(best) && t > best)) best = t;
+  return best;
+}
+
 // Accepts a bare plan or an export wrapper ({ format, plan }). Throws on a
 // malformed root; silently drops unknown keys and counts unusable blocks.
 // `fresh` regenerates every id so an import never collides with saved data.
@@ -300,6 +309,7 @@ export function sanitizePlan(raw, { fresh = false } = {}) {
     whenShort: cleanEnum(raw.whenShort, PLAN_FIELDS.whenShort, base.whenShort),
     stepDelay: cleanNumber(raw.stepDelay, 0, 60000, base.stepDelay),
     runDelay: cleanNumber(raw.runDelay, 0, 600000, base.runDelay),
+    timeout: cleanNumber(raw.timeout ?? legacyTimeout(rawBlocks), ...LIMITS.timeout, base.timeout),
     retries: cleanNumber(raw.retries, 0, 3, base.retries),
     onError: cleanEnum(raw.onError, PLAN_FIELDS.onError, base.onError),
   };

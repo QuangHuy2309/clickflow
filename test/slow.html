@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Slow page</title>
+<!-- A page whose content is ready at once but whose "load" never comes
+     quickly: the image is held by the test server (like a slow ad or tracker). -->
+<h1>Slow page</h1>
+<p><a id="again" href="slow.html?n=2">Open this page again</a></p>
+<button id="bump" onclick="document.getElementById('count').textContent = +document.getElementById('count').textContent + 1">Bump</button>
+<span id="count">0</span>
+<img src="slow.png" alt="" width="1" height="1">

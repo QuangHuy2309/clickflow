@@ -710,6 +710,7 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 /* ---------- Activity log ---------- */
 
 .log-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-height: 40vh;
@@ -722,11 +723,37 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
   overflow: hidden;
   animation: pop .15s ease-out;
 }
+.log-panel.sized { max-height: none; min-height: 0; }
+.log-panel.resizing { user-select: none; }
+.log-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 9px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 1;
+}
+.log-resize::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 3px;
+  margin-left: -18px;
+  border-radius: 3px;
+  background: var(--border);
+  transition: background .15s;
+}
+.log-resize:hover::after, .log-resize:focus-visible::after, .log-panel.resizing .log-resize::after { background: var(--accent); }
+.log-resize:focus-visible { outline: none; }
 .log-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 8px 8px 12px;
+  padding: 11px 8px 8px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 12.5px;
 }
@@ -751,6 +778,7 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 .log-where { color: var(--muted); font-size: 10.5px; font-weight: 650; margin-right: 6px; font-variant-numeric: tabular-nums; }
 .log-text { min-width: 0; overflow-wrap: anywhere; }
 .log-err { display: block; margin-top: 2px; font-size: 11.5px; }
+.log-note { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
 .log-ms { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-sep { padding: 6px 12px; color: var(--muted); font-size: 11px; font-weight: 650; background: var(--surface-2); }
 .log-shot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }

@@ -28,9 +28,16 @@ manifest.host_permissions = ['http://127.0.0.1/*', '<all_urls>'];
 writeFileSync(join(ext, 'manifest.json'), JSON.stringify(manifest));
 
 // Serves only the known test pages (no path traversal).
-const PAGES = new Set(['playground.html', 'search.html', 'results.html', 'article.html']);
+const PAGES = new Set(['playground.html', 'search.html', 'results.html', 'article.html', 'slow.html']);
+// slow.png is held for 10 s, like a slow ad or tracker that delays "load".
+const held = new Set();
 const server = createServer((req, res) => {
   const name = new URL(req.url, 'http://x').pathname.slice(1);
+  if (name === 'slow.png') {
+    held.add(res);
+    setTimeout(() => { held.delete(res); res.end(); }, 10000);
+    return;
+  }
   if (!PAGES.has(name)) { res.statusCode = 404; res.end(); return; }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.end(readFileSync(join(root, 'test', name)));
@@ -243,9 +250,9 @@ try {
   await cards.last().locator('.input-group input').fill('#does-not-exist');
   // Clear the recorded text backup ("Submit"), or the step would still succeed.
   await cards.last().locator('.field', { hasText: 'If not found' }).locator('input').fill('');
-  await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').fill('300');
-  await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').dispatchEvent('change');
   await panel.click('#tab-settings');
+  await panel.fill('#timeout', '500');
+  await panel.locator('#timeout').dispatchEvent('change');
   await panel.click('#quickRuns button[data-runs="1"]');
   await panel.click('#tab-steps');
   await panel.click('#runBtn');
@@ -474,9 +481,9 @@ try {
     name: 'Retry',
     blocks: [
       { type: 'click', selector: '#showLate' },
-      { type: 'click', selector: '#lateBtn', timeout: 800 },
+      { type: 'click', selector: '#lateBtn' },
     ],
-    retries: 0, stepDelay: 0,
+    retries: 0, stepDelay: 0, timeout: 800,
   });
   await openSite('playground.html');
   assert.match(await runAndWait(), /^Finished: 0 ok, 1 failed/, 'without retries the slow button times out');
@@ -493,8 +500,8 @@ try {
   // ---- Find-by-text backup when the selector no longer matches.
   await importPlan({
     name: 'Text backup',
-    blocks: [{ type: 'click', selector: 'div.old-layout > a.Xy12ab', fallbackText: 'cats — result 2', timeout: 1000 }],
-    retries: 0,
+    blocks: [{ type: 'click', selector: 'div.old-layout > a.Xy12ab', fallbackText: 'cats — result 2' }],
+    retries: 0, timeout: 1000,
   });
   await openSite('results.html?q=cats');
   assert.match(await runAndWait(), /^Done/);
@@ -506,8 +513,9 @@ try {
     name: 'Debug tools',
     blocks: [
       { type: 'click', selector: '#bump' },
-      { type: 'click', selector: '#doesNotExist', timeout: 500 },
+      { type: 'click', selector: '#doesNotExist' },
     ],
+    timeout: 500,
   });
   await openSite('playground.html');
   const countBefore2 = Number(await site.textContent('#counter'));
@@ -538,8 +546,8 @@ try {
     const perfFile = join(work, 'perf.json');
     writeFileSync(perfFile, JSON.stringify({
       name: 'Perf',
-      blocks: Array.from({ length: 10 }, () => ({ type: 'click', selector: '#bump', timeout: 2000 })),
-      runs: 3, runsMode: 'fixed', stepDelay: 0, runDelay: 0,
+      blocks: Array.from({ length: 10 }, () => ({ type: 'click', selector: '#bump' })),
+      timeout: 2000, runs: 3, runsMode: 'fixed', stepDelay: 0, runDelay: 0,
     }));
     await panel.click('#planMenuBtn');
     const perfChooser = panel.waitForEvent('filechooser');
@@ -555,6 +563,85 @@ try {
     console.log(`  ⏱ 30 click steps took ${elapsed} ms (${Math.round(elapsed / 30)} ms/step)`);
     assert.ok(elapsed < PERF_BUDGET_MS, `30 steps should take < ${PERF_BUDGET_MS} ms, took ${elapsed} ms`);
     ok('speed budget met');
+  }
+
+  // ================= Timeout setting, Stop, Pause, slow pages, log size =================
+
+  // ---- One shared element timeout, in Settings (not on every step).
+  await importPlan({ name: 'Shared timeout', timeout: 1500, blocks: [{ type: 'wait', mode: 'appear', selector: '#pauseTarget', timeout: 99999 }] });
+  assert.equal(await cards.nth(0).locator('label', { hasText: /up to|give up/i }).count(), 0, 'steps have no timeout field');
+  await panel.click('#tab-settings');
+  assert.equal(await panel.inputValue('#timeout'), '1500');
+  await panel.click('#tab-steps');
+  ok('element timeout is one plan setting');
+
+  // ---- Pause freezes the current step, clock included; Resume continues it.
+  await openSite('playground.html');
+  await panel.click('#logClear');
+  await panel.click('#runBtn');
+  await panel.waitForTimeout(400);
+  await panel.click('#pauseBtn');
+  await panel.waitForTimeout(2200); // longer than the 1.5 s timeout
+  assert.equal(await panel.textContent('#runStatus'), 'Paused');
+  assert.deepEqual(await panel.locator('#logList .log-item').allTextContents(), [], 'nothing failed while paused');
+  await site.evaluate(() => { const d = document.createElement('div'); d.id = 'pauseTarget'; d.textContent = 'here'; document.body.append(d); });
+  await panel.waitForTimeout(500);
+  assert.equal(await panel.textContent('#runStatus'), 'Paused', 'still paused even though the element appeared');
+  await panel.click('#pauseBtn');
+  assert.match(await (async () => { await waitUntil(panel, () => /^(Done|Finished|Stopped)/.test(document.getElementById('runStatus').textContent)); return panel.textContent('#runStatus'); })(), /^Done/);
+  const pausedMs = await panel.locator('#logList .log-item.ok .log-ms').first().textContent();
+  assert.ok(!/ s$/.test(pausedMs) || parseFloat(pausedMs) < 1.5, `paused time isn't counted (${pausedMs})`);
+  ok('pause froze the step and its timeout; resume finished it:', pausedMs);
+
+  // ---- Stop ends a run at once, mid-step (it used to wait for the step).
+  await importPlan({ name: 'Stop', timeout: 30000, blocks: [{ type: 'wait', mode: 'appear', selector: '#never' }, { type: 'click', selector: '#bump' }] });
+  await openSite('playground.html');
+  const countBeforeStop = Number(await site.textContent('#counter'));
+  await panel.click('#runBtn');
+  await waitUntil(panel, () => /^Run 1\/1 · Step 1/.test(document.getElementById('runStatus').textContent));
+  await panel.waitForTimeout(600); // well into the 30 s element wait
+  let t0 = Date.now();
+  await panel.click('#stopBtn');
+  await waitUntil(panel, () => /^Stopped/.test(document.getElementById('runStatus').textContent), 5000);
+  const stopMs = Date.now() - t0;
+  assert.ok(stopMs < 1000, `stop took ${stopMs} ms`);
+  assert.equal(await panel.isHidden('#stopBtn'), true);
+  await panel.waitForTimeout(800);
+  assert.equal(Number(await site.textContent('#counter')), countBeforeStop, 'no step ran after Stop');
+  ok(`stop ended the run in ${stopMs} ms`);
+
+  // ---- A page whose "load" is slow (held image) doesn't hold up the next step.
+  await importPlan({ name: 'Slow page', timeout: 5000, stepDelay: 0, blocks: [{ type: 'click', selector: '#again' }, { type: 'click', selector: '#bump' }] });
+  await site.goto(`${base}/slow.html`, { waitUntil: 'domcontentloaded' });
+  await site.bringToFront();
+  await waitUntil(panel, () => !document.getElementById('siteChip').hidden, 5000);
+  await panel.click('#logClear');
+  t0 = Date.now();
+  assert.match(await runAndWait(), /^Done/);
+  const slowMs = Date.now() - t0;
+  assert.equal(await site.textContent('#count'), '1', 'clicked on the new page');
+  assert.match(site.url(), /n=2/);
+  assert.ok(slowMs < 4000, `didn't wait for the 10 s image (took ${slowMs} ms)`);
+  ok(`next step ran ${slowMs} ms after a page whose load takes 10 s`);
+
+  // ---- The log can be resized from its top edge; double-click resets.
+  {
+    const panelBox = () => panel.locator('#logPanel').boundingBox();
+    const before = await panelBox();
+    const grip = await panel.locator('#logResize').boundingBox();
+    await panel.mouse.move(grip.x + grip.width / 2, grip.y + 4);
+    await panel.mouse.down();
+    await panel.mouse.move(grip.x + grip.width / 2, grip.y - 150, { steps: 6 });
+    await panel.mouse.up();
+    const after = await panelBox();
+    assert.ok(Math.abs(after.height - before.height - 150) < 6, `log grew by 150 px (${before.height} → ${after.height})`);
+    assert.equal(await panel.evaluate(() => localStorage.getItem('clickflow.logHeight')), String(Math.round(after.height)), 'height remembered');
+    await panel.focus('#logResize');
+    await panel.keyboard.press('ArrowDown');
+    assert.ok((await panelBox()).height < after.height, 'keyboard shrinks it');
+    await panel.dblclick('#logResize');
+    assert.equal(Math.round((await panelBox()).height), Math.round(before.height), 'double-click resets');
+    ok('log resized by drag and keyboard, remembered, reset by double-click');
   }
 
   // ---- Restricted pages are refused. Without the "tabs" permission Chrome
@@ -593,6 +680,7 @@ try {
   for (const [i, p] of context.pages().entries()) await p.screenshot({ path: join(out, `failure-${i}.png`) }).catch(() => {});
 } finally {
   await context.close();
+  for (const res of held) res.end();
   server.close();
   process.exitCode = failed ? 1 : 0;
 }
