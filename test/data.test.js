@@ -5,7 +5,7 @@ import {
   unknownPlaceholders, renameReferences, nameFromSelector,
 } from '../src/shared/data.js';
 import {
-  sanitizePlan, newBlock, newPlan, newDataset, validateBlock, cleanDataName, uniqueDataName, LIMITS,
+  sanitizePlan, sanitizeBlock, newBlock, newPlan, newDataset, validateBlock, cleanDataName, uniqueDataName, LIMITS, waitAfterMs,
 } from '../src/shared/schema.js';
 
 const planWith = (datasets, blocks, extra = {}) => ({
@@ -186,4 +186,65 @@ test('sanitizePlan: one shared element timeout, migrated from old per-step timeo
   assert.equal(old.timeout, 3000, 'the value most steps used');
   assert.equal(sanitizePlan({ blocks: [{ type: 'click', selector: '#a', timeout: 2000 }, { type: 'click', selector: '#b', timeout: 9000 }] }).plan.timeout, 9000, 'tie: the longer one');
   assert.equal(sanitizePlan({ timeout: 1 }).plan.timeout, LIMITS.timeout[0], 'clamped');
+});
+
+test('"Then wait" on any step: seconds or minutes, always under an hour', () => {
+  const b = newBlock('click');
+  assert.equal(b.waitAfter, 0);
+  assert.equal(b.waitUnit, 's');
+  assert.equal(waitAfterMs(sanitizeBlock({ ...b, waitAfter: 30 })), 30000);
+  assert.equal(waitAfterMs(sanitizeBlock({ ...b, waitAfter: 5, waitUnit: 'm' })), 300000);
+  assert.equal(sanitizeBlock({ ...b, waitAfter: 90, waitUnit: 'm' }).waitAfter, 59, 'minutes capped at 59');
+  assert.equal(sanitizeBlock({ ...b, waitAfter: 99999 }).waitAfter, 3599, 'seconds capped at 3599');
+  assert.equal(sanitizeBlock({ ...b, waitAfter: -5 }).waitAfter, 0);
+  assert.equal(sanitizeBlock({ ...b, waitUnit: 'h', waitAfter: 2 }).waitUnit, 's', 'unknown unit falls back to seconds');
+  // Older plans have no wait.
+  const { plan } = sanitizePlan({ blocks: [{ type: 'click', selector: '#a' }] });
+  assert.equal(waitAfterMs(plan.blocks[0]), 0);
+});
+
+test('For each row: a row, a cell when the rule needs one, and steps inside', () => {
+  const click = { ...newBlock('click'), selector: '#r1 a' };
+  const b = { ...newBlock('rows'), row: '#r1', steps: [click] };
+  assert.deepEqual(newBlock('rows').steps, []);
+  assert.equal(validateBlock(b), null, 'every row: no cell needed');
+  assert.match(validateBlock({ ...b, row: '' }), /A row of the list/);
+  assert.match(validateBlock({ ...b, op: 'gt' }), /Cell to check/);
+  assert.equal(validateBlock({ ...b, op: 'gt', cell: '#r1 .c3' }), null);
+  assert.equal(validateBlock({ ...b, op: 'ticked' }), null, 'ticked: the checkbox is optional');
+  assert.match(validateBlock({ ...b, steps: [] }), /at least one step inside/);
+  assert.match(validateBlock({ ...b, steps: [{ ...click, enabled: false }] }), /at least one step inside/);
+});
+
+test('For each row: nested steps are sanitized, one level deep, within the step limit', () => {
+  const inner = (n) => Array.from({ length: n }, () => ({ type: 'click', selector: '#a' }));
+  const { plan } = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', op: 'hack', steps: [
+    { type: 'click', selector: '#x', evil: '<script>' },
+    { type: 'rows', row: '#nested', steps: inner(2) },
+    { type: 'nope' },
+    'junk',
+  ] }] });
+  const loop = plan.blocks[0];
+  assert.equal(loop.op, 'any');
+  assert.deepEqual(loop.steps.map((x) => x.type), ['click'], 'no loop inside a loop, junk dropped');
+  assert.equal(loop.steps[0].evil, undefined);
+  // The plan limit counts nested steps: 1 loop + 199 inside is the most.
+  const big = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', steps: inner(60) }, ...inner(150)] });
+  const count = big.plan.blocks.reduce((n, x) => n + 1 + (x.steps?.length || 0), 0);
+  assert.ok(count <= LIMITS.blocks, `kept ${count}`);
+  assert.equal(big.plan.blocks[0].steps.length, 50, 'at most 50 steps inside one loop');
+  assert.ok(big.dropped > 0);
+  // Fresh ids for nested steps too, all unique.
+  const ids = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', steps: inner(3) }] }, { fresh: true }).plan.blocks.flatMap((x) => [x.id, ...x.steps.map((y) => y.id)]);
+  assert.equal(new Set(ids).size, 4);
+});
+
+test('data sets used inside a row loop count, unless the loop is off', () => {
+  const p = planWith([['names', 'a\nb']], [{ ...newBlock('rows'), row: '#r', steps: [typeStep('{{names}}')] }]);
+  assert.deepEqual([...usedDatasets(p, { enabledOnly: true })], ['names']);
+  assert.equal(runCount(p).runs, 2);
+  p.blocks[0].enabled = false;
+  assert.deepEqual([...usedDatasets(p, { enabledOnly: true })], []);
+  renameReferences(p, 'names', 'people');
+  assert.equal(p.blocks[0].steps[0].text, '{{people}}');
 });

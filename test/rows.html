@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ClickFlow rows test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #1b1d29; }
+  .head, .row { display: grid; grid-template-columns: 32px 40px 1fr 70px 70px 70px; align-items: center; gap: 8px; padding: 8px 12px; }
+  .head { font-weight: 600; color: #6a7088; }
+  #list { height: 320px; overflow: auto; border: 1px solid #e3e6ef; border-radius: 8px; }
+  .row { border-bottom: 1px solid #eef0f5; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #c7cbe0; }
+  .who a { display: block; font-weight: 600; color: #1b1d29; text-decoration: none; }
+  .who span { color: #6a7088; font-size: 12px; }
+  .num { text-align: center; }
+</style>
+</head>
+<body>
+  <h1>Friends</h1>
+  <div class="head"><span></span><span></span><span>Name</span><span>Likes</span><span>Comments</span><span>Score</span></div>
+  <!-- Loads 10 more rows each time it's scrolled to the bottom, up to 30. -->
+  <div id="list"></div>
+  <script>
+    const list = document.getElementById('list');
+    // Row i: column 1 is i for every 4th row, column 3 is above 0 for rows 3, 6, 15 and 24.
+    const c3 = { 3: 30, 6: 1250, 15: 378, 24: 7 };
+    function addRows(from, to) {
+      for (let i = from; i <= to; i++) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.id = `r${i}`;
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.setAttribute('aria-label', `Select person ${i}`);
+        const avatar = document.createElement('span');
+        avatar.className = 'avatar';
+        const who = document.createElement('div');
+        who.className = 'who';
+        const a = document.createElement('a');
+        a.href = `profile.html?id=${1000 + i}`;
+        a.textContent = `Person ${i}`;
+        const id = document.createElement('span');
+        id.textContent = String(100000 + i);
+        who.append(a, id);
+        row.append(box, avatar, who);
+        for (const [cls, v] of [['c1', i % 4 === 0 ? i : 0], ['c2', 0], ['c3', c3[i] ? c3[i].toLocaleString('en-US') : 0]]) {
+          const n = document.createElement('span');
+          n.className = `num ${cls}`;
+          n.textContent = String(v);
+          row.append(n);
+        }
+        list.append(row);
+      }
+    }
+    addRows(1, 10);
+    let loading = false;
+    list.addEventListener('scroll', () => {
+      const count = list.children.length;
+      if (loading || count >= 30 || list.scrollTop + list.clientHeight < list.scrollHeight - 4) return;
+      loading = true;
+      setTimeout(() => { addRows(count + 1, count + 10); loading = false; }, 300);
+    });
+  </script>
+</body>
+</html>

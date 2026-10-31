@@ -2,7 +2,8 @@
 // Steps are sent to the page as structured data via chrome.scripting.
 
 import { planRuns, templateBlock, unknownPlaceholders } from '../shared/data.js';
-import { BLOCK_TYPES, LIMITS, validateBlock } from '../shared/schema.js';
+import { t } from '../shared/i18n.js';
+import { BLOCK_TYPES, LIMITS, validateBlock, waitAfterMs } from '../shared/schema.js';
 import { friendlyError } from './site.js';
 
 const ACTIONS_FILE = 'src/content/actions.js';
@@ -78,20 +79,25 @@ export class Runner {
   async start(plan, tabId) {
     if (this.busy) return;
     const blocks = plan.blocks.filter((b) => b.enabled);
-    if (!blocks.length) throw new Error('Add at least one enabled step first.');
+    if (!blocks.length) throw new Error(t('Add at least one enabled step first.'));
     const timeout = plan.timeout || 5000;
     for (const b of blocks) {
-      const problem = validateBlock(b);
-      if (problem) {
-        this.hooks.onStepError?.(b.id, problem);
-        throw new Error(`Step ${plan.blocks.indexOf(b) + 1} (${BLOCK_TYPES[b.type].label}): ${problem}`);
+      const n = plan.blocks.indexOf(b) + 1;
+      for (const [x, no] of [[b, n], ...(b.steps || []).map((x, i) => [x, `${n}.${i + 1}`]).filter(([x]) => x.enabled)]) {
+        const problem = validateBlock(x);
+        if (problem) {
+          this.hooks.onStepError?.(x.id, problem);
+          throw new Error(t('Step {n} ({type}): {problem}', { n: no, type: t(BLOCK_TYPES[x.type].label), problem }));
+        }
       }
     }
+    this._plan = plan;
+    this._opened = 0;
     const missing = unknownPlaceholders(plan);
-    if (missing.length) throw new Error(`No data set named ${missing.map((m) => `“${m}”`).join(', ')}. Add it in the Data tab.`);
+    if (missing.length) throw new Error(t('No data set named {names}. Add it in the Data tab.', { names: missing.map((m) => `“${m}”`).join(', ') }));
     const values = planRuns(plan);
-    if (!values.length) throw new Error('A data set used by your steps is empty. Add values in the Data tab.');
-    if (values.length > LIMITS.runs) throw new Error(`Too many runs (max ${LIMITS.runs}).`);
+    if (!values.length) throw new Error(t('A data set used by your steps is empty. Add values in the Data tab.'));
+    if (values.length > LIMITS.runs) throw new Error(t('Too many runs (max {n}).', { n: LIMITS.runs }));
 
     this.tabId = tabId;
     this.status = 'running';
@@ -110,25 +116,14 @@ export class Runner {
           if (!(await this._checkpoint())) break outer;
           const block = blocks[s];
           const step = { ...templateBlock(block, values[r], r), timeout };
+          // Steps inside a row loop get this run's values too.
+          if (block.steps) step.steps = block.steps.filter((x) => x.enabled).map((x) => ({ ...templateBlock(x, values[r], r), timeout }));
           const info = { run: r, runs: values.length, step: s, steps: blocks.length, blockId: block.id };
-          this.hooks.onProgress?.(info);
-          const t0 = performance.now();
-          const paused0 = this._pausedMs;
-          const label = `Run ${r + 1}/${values.length} · Step ${s + 1}/${blocks.length} · ${BLOCK_TYPES[block.type].label}`;
-          let res = await this._execute(step, label, info);
-          // A retry changes something: it waits twice as long for the element.
-          for (let attempt = 1; !res.ok && !this._stopped && attempt <= (plan.retries || 0); attempt++) {
-            this.hooks.onRetry?.({ ...info, block: step, attempt, error: res.error });
-            res = await this._execute({ ...step, timeout: Math.min(timeout * 2 ** attempt, 240000) }, label, info);
-          }
+          const res = await this._runStep(step, info);
           if (this._stopped) break outer;
-          // Time spent paused isn't the step's fault, so it isn't counted.
-          const ms = Math.round(performance.now() - t0 - (this._pausedMs - paused0));
-          this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms, loadMs: res.loadMs });
           if (!res.ok) {
             failed = true;
             summary.failed++;
-            this.hooks.onStepError?.(block.id, res.error, r);
             if (plan.onError === 'stop') break outer;
             break;
           }
@@ -147,6 +142,34 @@ export class Runner {
       this._emitStatus();
       this.hooks.onDone?.(summary);
     }
+  }
+
+  // One step: run it (retrying with a longer wait), log it, then its "Then
+  // wait". `info.row` / `info.sub` mark a step inside a row loop.
+  async _runStep(step, info) {
+    this.hooks.onProgress?.(info);
+    const t0 = performance.now();
+    const paused0 = this._pausedMs;
+    const where = t('Run {run}/{runs} · Step {step}/{steps}', { run: info.run + 1, runs: info.runs, step: info.step + 1, steps: info.steps });
+    const row = info.row ? ` · ${t('Row {n}', { n: info.row })}` : '';
+    const label = t('ClickFlow · {step} · Esc to stop', { step: `${where}${row} · ${t(BLOCK_TYPES[step.type].label)}` });
+    let res = await this._execute(step, label, info);
+    // A retry changes something: it waits twice as long for the element.
+    for (let attempt = 1; !res.ok && !res.noRetry && !this._stopped && attempt <= (this._plan.retries || 0); attempt++) {
+      this.hooks.onRetry?.({ ...info, block: step, attempt, error: res.error });
+      res = await this._execute({ ...step, timeout: Math.min(step.timeout * 2 ** attempt, 240000) }, label, info);
+    }
+    if (this._stopped) return res;
+    // Time spent paused isn't the step's fault, so it isn't counted.
+    const ms = Math.round(performance.now() - t0 - (this._pausedMs - paused0));
+    if (!res.inner) this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms, loadMs: res.loadMs, rows: res.rows, opened: res.opened });
+    if (!res.ok) {
+      this.hooks.onStepError?.(info.blockId, res.error, info.run);
+      return res;
+    }
+    const wait = waitAfterMs(step);
+    if (wait) await this._countdown(wait, info);
+    return res;
   }
 
   // Pause takes effect at once: the current step's element wait freezes
@@ -186,6 +209,18 @@ export class Runner {
   async _checkpoint() {
     while (this.status === 'paused' && !this._stopped) await this._sleep(60000);
     return !this._stopped;
+  }
+
+  // A step's "Then wait": counts down, holds while paused, ends at once on Stop.
+  async _countdown(ms, info) {
+    let left = ms;
+    while (left > 0 && (await this._checkpoint())) {
+      this.hooks.onWait?.({ ...info, left });
+      const t0 = performance.now();
+      await this._sleep(Math.min(left, 1000));
+      if (this.status !== 'paused') left -= performance.now() - t0;
+    }
+    this.hooks.onWait?.({ ...info, left: 0 });
   }
 
   _sleep(ms) {
@@ -245,7 +280,10 @@ export class Runner {
       await this._guard(chrome.scripting.executeScript({ target, injectImmediately: true, files: [ACTIONS_FILE] }), limit);
       [res] = await call();
     }
-    return res?.result ?? { ok: false, error: 'The page did not respond.' };
+    const result = res?.result ?? { ok: false, error: t('The page did not respond.') };
+    // Page-side errors come back as { key, vars } so they can be translated here.
+    if (result.error && typeof result.error === 'object') result.error = t(result.error.key, result.error.vars);
+    return result;
   }
 
   async _execute(block, label, info) {
@@ -254,6 +292,7 @@ export class Runner {
       return { ok: true };
     }
     if (block.type === 'screenshot') return this._screenshot(block, label, info);
+    if (block.type === 'rows') return this._rows(block, label, info);
     this._navigating = false;
     // Select steps can wait for the opener, then the list, then scroll.
     const limit = block.timeout * (block.type === 'select' ? 3 : 1) + CALL_SLACK_MS;
@@ -274,13 +313,17 @@ export class Runner {
           target: { tabId: this.tabId }, world: 'MAIN', injectImmediately: true, func: pressEnterInPage, args: [block.selector],
         }), CALL_SLACK_MS).catch((e) => { if (e instanceof Stopped) throw e; });
       }
+      if (result.ok && result.href) {
+        await this._openTab(result.href);
+        return { ...result, opened: true };
+      }
       // Only steps that can trigger a navigation pay for the navigation check.
       const canNavigate = block.type === 'click' || block.type === 'select' || (block.type === 'type' && block.enter);
       if (canNavigate) result.loadMs = await this._settle(result.doc);
       return result;
     } catch (e) {
-      if (e instanceof Stopped) return { ok: false, error: 'Stopped.' };
-      if (e instanceof Hung) return { ok: false, error: 'The page stopped responding. Try reloading it.' };
+      if (e instanceof Stopped) return { ok: false, error: t('Stopped.') };
+      if (e instanceof Hung) return { ok: false, error: t('The page stopped responding. Try reloading it.') };
       return { ok: false, error: friendlyError(e.message) };
     }
   }
@@ -324,7 +367,7 @@ export class Runner {
   async _screenshot(block, label, info) {
     try {
       const tab = await chrome.tabs.get(this.tabId);
-      if (!tab.active) return { ok: false, error: 'Switch to the tab being automated: screenshots capture the visible tab.' };
+      if (!tab.active) return { ok: false, error: t('Switch to the tab being automated: screenshots capture the visible tab.') };
       let crop = null;
       if (block.selector) {
         const m = await this._callPage('measure', [block], block.timeout + CALL_SLACK_MS);
@@ -346,12 +389,51 @@ export class Runner {
       this.hooks.onScreenshot?.({ ...info, name: block.name || `screenshot-${info.run + 1}`, blob });
       return { ok: true };
     } catch (e) {
-      if (e instanceof Stopped) return { ok: false, error: 'Stopped.' };
-      if (e instanceof Hung) return { ok: false, error: 'The page stopped responding. Try reloading it.' };
+      if (e instanceof Stopped) return { ok: false, error: t('Stopped.') };
+      if (e instanceof Hung) return { ok: false, error: t('The page stopped responding. Try reloading it.') };
       return { ok: false, error: /permission|activeTab|all_urls/i.test(e.message)
-        ? "ClickFlow isn't allowed to capture this page. Allow it on this site and try again."
+        ? t("ClickFlow isn't allowed to capture this page. Allow it on this site and try again.")
         : friendlyError(e.message) };
     }
+  }
+
+  // "For each row": the page makes the next row that passes the rule the
+  // current row, then the steps inside the loop run in that row.
+  async _rows(block, label, info) {
+    const token = Math.random().toString(36).slice(2);
+    let count = 0;
+    try {
+      while (count < block.max) {
+        if (!(await this._checkpoint())) throw new Stopped();
+        const res = await this._callPage('nextRow', [block, label, token, count === 0], block.timeout * 3 + CALL_SLACK_MS);
+        // Rows already handled must not be handled again by a retry.
+        if (!res.ok) return count ? { ...res, noRetry: true, error: t('Row {n}: {error}', { n: count + 1, error: res.error }) } : res;
+        if (res.done) break;
+        count++;
+        this.hooks.onRow?.({ ...info, n: count, label: res.label });
+        for (let i = 0; i < block.steps.length; i++) {
+          if (!(await this._checkpoint())) throw new Stopped();
+          const inner = { ...block.steps[i], rowJob: token };
+          const r = await this._runStep(inner, { ...info, blockId: inner.id, row: count, sub: i, subs: block.steps.length });
+          if (this._stopped) throw new Stopped();
+          // The inner step is already logged and marked; this ends the loop.
+          if (!r.ok) return { ok: false, noRetry: true, inner: true, error: t('Row {n}: {error}', { n: count, error: r.error }) };
+          if (i < block.steps.length - 1) await this._sleep(this._plan.stepDelay);
+        }
+      }
+      return { ok: true, rows: count };
+    } catch (e) {
+      if (e instanceof Stopped) return { ok: false, error: t('Stopped.') };
+      if (e instanceof Hung) return { ok: false, error: t('The page stopped responding. Try reloading it.') };
+      return { ok: false, error: friendlyError(e.message) };
+    }
+  }
+
+  // A web link from a row: a background tab next to the list's tab.
+  async _openTab(url) {
+    if (!/^https?:$/.test(new URL(url).protocol)) throw new Error(t('ClickFlow only opens web links.'));
+    const tab = await chrome.tabs.get(this.tabId);
+    await this._guard(chrome.tabs.create({ url, active: false, windowId: tab.windowId, openerTabId: this.tabId, index: tab.index + 1 + this._opened++ }));
   }
 
   // Fire-and-forget page calls (badge, pause, abort). Bounded so a frozen

@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "ClickFlow: Click & Type Automation",
+  "name": "__MSG_name__",
   "short_name": "ClickFlow",
-  "version": "1.2.0",
-  "description": "Automate repetitive clicks and typing on web pages with step-by-step plans you build and run yourself.",
+  "version": "1.3.1",
+  "description": "__MSG_description__",
+  "default_locale": "en",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon16.png",
@@ -12,7 +13,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Open ClickFlow",
+    "default_title": "__MSG_actionTitle__",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
@@ -24,6 +25,13 @@
   "background": {
     "service_worker": "src/background.js"
   },
-  "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
-  "optional_host_permissions": ["<all_urls>"]
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ]
 }

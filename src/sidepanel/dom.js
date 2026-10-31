@@ -24,6 +24,7 @@ const ICONS = {
   select: 'M4 6h11 M4 12h11 M4 18h7 M15 17l2.5 2.5L22 15',
   wait: 'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z M12 8v4l3 2',
   scroll: 'M12 3v18 M8 7l4-4 4 4 M8 17l4 4 4-4',
+  rows: 'M4 5h16v14H4z M4 10h16 M4 15h16 M9 5v14',
   grip: 'M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01',
   plus: 'M12 5v14 M5 12h14',
   trash: 'M4 7h16 M10 11v6 M14 11v6 M6 7l1 13h10l1-13 M9 7V4h6v3',

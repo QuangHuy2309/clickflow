@@ -1,0 +1,84 @@
+# Uploads the extension to the Chrome Web Store, and optionally submits it
+# for review. Runs only when started by hand or when a version tag (v1.2.3)
+# is pushed. The store credentials live in the "chrome-web-store"
+# environment, which waits for the owner's approval before each run.
+# Setup: store/publish-from-github.md
+name: Publish to Chrome Web Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: Submit for review after uploading (otherwise only upload a draft)
+        type: boolean
+        default: false
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-web-store
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: chrome-web-store
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Check the tag matches manifest.json
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./manifest.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json version $version"
+            exit 1
+          fi
+
+      - name: Build the zip
+        run: sh scripts/package.sh
+
+      - name: Upload (and submit) through the Chrome Web Store API
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          SUBMIT: ${{ github.event_name == 'push' || inputs.submit }}
+        run: |
+          set -eu
+          zip="dist/clickflow-$(node -p "require('./manifest.json').version").zip"
+          token=$(curl -sS --fail-with-body https://oauth2.googleapis.com/token \
+            -d client_id="$CLIENT_ID" -d client_secret="$CLIENT_SECRET" \
+            -d refresh_token="$REFRESH_TOKEN" -d grant_type=refresh_token \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).access_token||''))")
+          [ -n "$token" ] || { echo "::error::Could not get an access token. Check the CWS_* secrets."; exit 1; }
+          echo "::add-mask::$token"
+
+          echo "Uploading $zip"
+          upload=$(curl -sS --fail-with-body -X PUT -T "$zip" \
+            -H "Authorization: Bearer $token" -H "x-goog-api-version: 2" \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID")
+          echo "$upload"
+          echo "$upload" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(r.uploadState!=='SUCCESS'){console.error('::error::Upload failed: '+JSON.stringify(r.itemError||r));process.exit(1)}})"
+
+          if [ "$SUBMIT" = "true" ]; then
+            echo "Submitting for review"
+            curl -sS --fail-with-body -X POST -H "Content-Length: 0" \
+              -H "Authorization: Bearer $token" -H "x-goog-api-version: 2" \
+              "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID/publish"
+          else
+            echo "Uploaded as a draft. Submit it from the dashboard, or rerun with 'submit'."
+          fi

@@ -8,6 +8,7 @@ Chrome MV3 side-panel extension: record or build step plans (click, type, select
 - **After every review or bug report, update [lessons-learned/](lessons-learned/README.md)** with symptom, root cause, fix, and guard, and add a row to its index. Add a regression test for each reported bug, ideally failing before the fix.
 - Keep Chrome Web Store compliance: no remote code, no network requests, minimal permissions (host access stays optional and per site). Update `PRIVACY.md`, `SECURITY.md`, and `store/` when behavior changes.
 - Build UI with `h()` / `textContent`; never `innerHTML`. Everything imported or recorded goes through `sanitizePlan` / `sanitizeBlock`.
+- UI text is English wrapped in `t()` (`src/shared/i18n.js`); add the Vietnamese to `src/shared/i18n-vi.js`. `npm test` fails on a missing or stale translation.
 
 ## Commands
 

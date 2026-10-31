@@ -1,5 +1,8 @@
 // Plan and block definitions, defaults, and strict sanitizing of untrusted input
 // (saved state and imported files both pass through sanitizePlan).
+// Labels here are English; the panel shows them through t().
+
+import { t } from './i18n.js';
 
 export const LIMITS = {
   blocks: 200,
@@ -96,7 +99,52 @@ export const BLOCK_TYPES = {
       text('name', 'File name', 'screenshot-{{index}}', { hint: '{{index}} = run number; data sets work too' }),
     ],
   },
+  // Runs the steps inside it once for every row of a list or table that
+  // passes the rule, e.g. each person whose 3rd column is above 0. Those
+  // steps act in the current row. Rows further down are reached by
+  // scrolling, which also loads more rows on lazy lists.
+  rows: {
+    label: 'For each row',
+    container: true,
+    fields: [
+      selector('row', 'A row of the list', { required: true, hint: 'Pick any one row. ClickFlow finds the others like it.' }),
+      choice('op', 'Which rows', [
+        { value: 'any', label: 'Every row' },
+        { value: 'ticked', label: 'Rows that are ticked' },
+        { value: 'eq', label: 'Cell equals' },
+        { value: 'ne', label: 'Cell does not equal' },
+        { value: 'gt', label: 'Cell is greater than' },
+        { value: 'lt', label: 'Cell is less than' },
+        { value: 'contains', label: 'Cell contains' },
+      ], 'any'),
+      selector('cell', 'Cell to check', {
+        show: (b) => b.op !== 'any' && b.op !== 'ticked',
+        required: (b) => b.op !== 'any' && b.op !== 'ticked',
+        hint: 'Pick it in any row',
+      }),
+      selector('checkbox', 'Checkbox (optional)', {
+        show: (b) => b.op === 'ticked',
+        hint: 'Leave empty to use the first checkbox in each row',
+      }),
+      text('value', 'Value', '0', { show: (b) => b.op !== 'any' && b.op !== 'ticked', variable: true, maxLen: 200 }),
+      number('max', 'At most this many rows', 10, 1, 500),
+    ],
+  },
 };
+
+// Steps inside a "For each row" block: any type except another row loop.
+export const INNER_TYPES = Object.keys(BLOCK_TYPES).filter((type) => !BLOCK_TYPES[type].container);
+export const LIMITS_INNER = 50;
+
+// Every step of a plan, those inside "For each row" blocks included.
+export function allSteps(blocks) {
+  return blocks.flatMap((b) => [b, ...(b.steps || [])]);
+}
+
+// "Then wait" after any step: a number of seconds or minutes, under an hour.
+export const WAIT_UNITS = { s: 1000, m: 60000 };
+export const waitMax = (unit) => (unit === 'm' ? 59 : 3599);
+export const waitAfterMs = (b) => (b.waitAfter || 0) * (WAIT_UNITS[b.waitUnit] || 1000);
 
 export const PLAN_FIELDS = {
   onError: ['stop', 'skip'],
@@ -133,8 +181,9 @@ export function newId() {
 export function newBlock(type) {
   const def = BLOCK_TYPES[type];
   if (!def) throw new Error(`Unknown step type: ${type}`);
-  const block = { id: newId(), type, enabled: true, collapsed: false, note: '' };
+  const block = { id: newId(), type, enabled: true, collapsed: false, note: '', waitAfter: 0, waitUnit: 's' };
   for (const f of def.fields) block[f.key] = f.default;
+  if (def.container) block.steps = [];
   return block;
 }
 
@@ -161,10 +210,11 @@ export const isShown = (f, b) => !f.show || f.show(b);
 // Returns a human-readable problem with the block, or null when it can run.
 export function validateBlock(b) {
   const def = BLOCK_TYPES[b.type];
-  if (!def) return 'Unknown step type.';
+  if (!def) return t('Unknown step type.');
   for (const f of def.fields) {
-    if (isShown(f, b) && isRequired(f, b) && !String(b[f.key] ?? '').trim()) return `"${f.label}" is required.`;
+    if (isShown(f, b) && isRequired(f, b) && !String(b[f.key] ?? '').trim()) return t('"{field}" is required.', { field: t(f.label) });
   }
+  if (def.container && !(b.steps || []).some((x) => x.enabled)) return t('Add at least one step inside it.');
   return null;
 }
 
@@ -194,7 +244,9 @@ export function sanitizeBlock(raw) {
     enabled: raw.enabled !== false,
     collapsed: raw.collapsed === true,
     note: cleanString(raw.note, LIMITS.note),
+    waitUnit: cleanEnum(raw.waitUnit, Object.keys(WAIT_UNITS), 's'),
   };
+  block.waitAfter = cleanNumber(raw.waitAfter, 0, waitMax(block.waitUnit), 0);
   for (const f of def.fields) {
     const v = raw[f.key];
     switch (f.kind) {
@@ -213,6 +265,12 @@ export function sanitizeBlock(raw) {
         block[f.key] = cleanEnum(v, f.options.map((o) => o.value), f.default);
         break;
     }
+  }
+  // Steps inside a row loop: one level deep, never another row loop.
+  if (def.container) {
+    block.steps = (Array.isArray(raw.steps) ? raw.steps : []).slice(0, LIMITS_INNER)
+      .map((x) => (x && BLOCK_TYPES[x.type] && !BLOCK_TYPES[x.type].container ? sanitizeBlock(x) : null))
+      .filter(Boolean);
   }
   return block;
 }
@@ -279,17 +337,32 @@ function legacyTimeout(rawBlocks) {
 // `fresh` regenerates every id so an import never collides with saved data.
 export function sanitizePlan(raw, { fresh = false } = {}) {
   if (raw && typeof raw === 'object' && raw.format === 'clickflow-plan') raw = raw.plan;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('This is not a ClickFlow plan.');
-  if (raw.blocks !== undefined && !Array.isArray(raw.blocks)) throw new Error('This plan has an invalid step list.');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('This is not a ClickFlow plan.'));
+  if (raw.blocks !== undefined && !Array.isArray(raw.blocks)) throw new Error(t('This plan has an invalid step list.'));
 
   const base = newPlan();
   const rawBlocks = raw.blocks || [];
   const blocks = [];
   let dropped = Math.max(0, rawBlocks.length - LIMITS.blocks);
+  const ids = new Set();
+  const uniqueId = (b) => {
+    if (fresh || ids.has(b.id)) b.id = newId();
+    ids.add(b.id);
+  };
+  let total = 0;
   for (const rb of rawBlocks.slice(0, LIMITS.blocks)) {
     const b = sanitizeBlock(rb);
     if (!b) { dropped++; continue; }
-    if (fresh || blocks.some((x) => x.id === b.id)) b.id = newId();
+    // LIMITS.blocks counts the steps inside row loops too.
+    if (b.steps) {
+      const room = Math.max(0, LIMITS.blocks - total - 1);
+      dropped += Math.max(0, (Array.isArray(rb.steps) ? rb.steps.length : 0) - Math.min(b.steps.length, room));
+      b.steps = b.steps.slice(0, room);
+      b.steps.forEach(uniqueId);
+    }
+    if (total + 1 + (b.steps?.length || 0) > LIMITS.blocks) { dropped++; continue; }
+    total += 1 + (b.steps?.length || 0);
+    uniqueId(b);
     blocks.push(b);
   }
 

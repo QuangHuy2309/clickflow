@@ -7,7 +7,7 @@
   const buildSelector = (el) => window.__clickflowSelector.build(el);
   let session = null;
 
-  function buildUi() {
+  function buildUi(text) {
     const host = document.createElement('clickflow-picker');
     host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
     const root = host.attachShadow({ mode: 'closed' });
@@ -25,7 +25,7 @@
     tip.className = 'tip';
     const bar = document.createElement('div');
     bar.className = 'bar';
-    bar.textContent = 'Click an element to select it · Esc to cancel';
+    bar.textContent = text || 'Click an element to select it · Esc to cancel';
     root.append(style, box, tip, bar);
     document.documentElement.append(host);
     return { host, box, tip };
@@ -67,9 +67,9 @@
 
   const BLOCKED = ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'dblclick', 'contextmenu'];
 
-  function start(requestId) {
+  function start(requestId, text) {
     stop();
-    session = { requestId, target: null, ui: buildUi() };
+    session = { requestId, target: null, ui: buildUi(text) };
     document.addEventListener('mousemove', onMove, true);
     document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKey, true);
