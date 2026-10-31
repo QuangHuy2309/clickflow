@@ -14,7 +14,7 @@ The store listing (description, images, privacy answers) is still edited in the 
    - User type **External**, app name `ClickFlow publisher`, your email as the support and developer contact.
    - Add yourself (`lqhuy2309@gmail.com`) as a **test user**.
 4. **Create the OAuth client:** APIs & Services → Credentials → Create credentials → OAuth client ID → Application type **Desktop app**. Copy the **Client ID** and **Client secret**.
-5. **Get a refresh token.** Open this URL in the browser where you're signed in as the publisher account (put your client ID in place of `CLIENT_ID`):
+5. **Get a refresh token** (easiest: `node scripts/cws-auth.mjs path/to/client_secret.json`, which signs in, then stores all four secrets below with `gh` without showing them; or by hand:) Open this URL in the browser where you're signed in as the publisher account (put your client ID in place of `CLIENT_ID`):
 
    ```
    https://accounts.google.com/o/oauth2/auth?response_type=code&scope=https://www.googleapis.com/auth/chromewebstore&access_type=offline&prompt=consent&redirect_uri=http://localhost&client_id=CLIENT_ID
