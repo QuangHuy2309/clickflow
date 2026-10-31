@@ -32,6 +32,9 @@
     <label for="name">Name</label>
     <input id="name" name="name" placeholder="Full name">
 
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" placeholder="you@example.com">
+
     <label for="country">Country (native select)</label>
     <select id="country" name="country">
       <option value="">Choose…</option>
@@ -91,9 +94,10 @@
   document.getElementById('form').addEventListener('submit', (e) => {
     e.preventDefault();
     const name = document.getElementById('name').value;
+    const email = document.getElementById('email').value;
     const country = document.getElementById('country').value;
     const li = document.createElement('li');
-    li.textContent = `name=${name} country=${country} city=${city}`;
+    li.textContent = `name=${name} email=${email} country=${country} city=${city}`;
     document.getElementById('log').append(li);
     document.getElementById('form').reset();
     city = '';

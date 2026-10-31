@@ -15,6 +15,7 @@
   const ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy', 'name', 'aria-label', 'placeholder', 'title', 'alt'];
 
   function build(el) {
+    if (el === document.documentElement || el === document.body) return el.localName;
     if (el.id && stableId(el.id) && unique(`#${CSS.escape(el.id)}`)) return `#${CSS.escape(el.id)}`;
     const tag = el.localName;
     for (const a of ATTRS) {

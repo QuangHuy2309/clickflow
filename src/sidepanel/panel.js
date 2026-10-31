@@ -1,5 +1,7 @@
-import { BLOCK_TYPES, LIMITS, isShown, newBlock, newId, newPlan, sanitizeBlock } from '../shared/schema.js';
-import { parseDataList } from '../shared/data.js';
+import {
+  BLOCK_TYPES, LIMITS, cleanColumnName, isShown, newBlock, newId, newPlan, sanitizeBlock, uniqueColumnName,
+} from '../shared/schema.js';
+import { columnRef, nameFromSelector, parsePaste, placeholders, renameReferences, runRows } from '../shared/data.js';
 import { BLOCK_UI, summarize } from './blocks.js';
 import { h, icon } from './dom.js';
 import { exportPlan, flushState, loadState, readImportFile, saveState } from './storage.js';
@@ -335,15 +337,7 @@ function fieldControl(b, f, li) {
       const input = f.kind === 'text'
         ? h('input', { id, type: 'text', value: b[f.key], maxLength: f.maxLen, oninput: (e) => update(e.target.value) })
         : h('textarea', { id, rows: 2, value: b[f.key], maxLength: f.maxLen, oninput: (e) => update(e.target.value) });
-      control = f.variable && b[f.key] !== '{{value}}'
-        ? h('div', { class: 'input-group' }, input, h('button', {
-          type: 'button',
-          class: 'chip-btn var-btn',
-          title: 'Use the data list here: replaces this text with {{value}} and moves it into the data list',
-          'aria-label': 'Use data list value',
-          onclick: () => makeVariable(b, f),
-        }, '{{ }}'))
-        : input;
+      control = f.variable ? variableControl(b, f, input) : input;
       break;
     }
     case 'number':
@@ -367,19 +361,104 @@ function fieldControl(b, f, li) {
   return h('div', { class: 'field' }, h('label', { for: id }, f.label), control, f.hint && h('small', {}, f.hint));
 }
 
-// Turns a recorded literal into {{value}}, seeding the data list with it.
+// Fields that can take a data column. With several columns they get a value
+// source dropdown instead of typing {{…}}; with one column, a {{ }} button.
+const FIXED = '__fixed__';
+const NEW_COLUMN = '__new__';
+
+function variableControl(b, f, input) {
+  const p = plan();
+  const ref = columnRef(b[f.key]);
+  const column = ref && (p.columns.includes(ref) ? ref : ref === 'value' ? p.columns[0] : null);
+
+  if (p.columns.length > 1) {
+    const select = h('select', {
+      class: `source-select${column ? '' : ' fixed'}`,
+      'aria-label': `${f.label} source`,
+      onchange: (e) => {
+        const v = e.target.value;
+        if (v === FIXED) setFieldSource(b, f, null);
+        else if (v === NEW_COLUMN) setFieldSource(b, f, addColumn(nameFromSelector(b.selector)));
+        else setFieldSource(b, f, v);
+      },
+    },
+    h('option', { value: FIXED, selected: !column }, 'Fixed text'),
+    h('optgroup', { label: 'Data column' }, p.columns.map((c) => h('option', { value: c, selected: c === column }, `{{${c}}}`))),
+    p.columns.length < LIMITS.columns && h('option', { value: NEW_COLUMN }, '+ New column'));
+    const body = column
+      ? h('div', { class: 'uses-column' }, 'Each run uses', h('code', {}, column))
+      : input;
+    return h('div', { class: 'input-group' }, body, select);
+  }
+
+  if (column) return input;
+  return h('div', { class: 'input-group' }, input, h('button', {
+    type: 'button',
+    class: 'chip-btn var-btn',
+    title: 'Use a data column here: the current text moves into the Data table',
+    'aria-label': 'Use a data column',
+    onclick: () => makeVariable(b, f),
+  }, '{{ }}'));
+}
+
+function referencedColumns(p) {
+  const used = new Set();
+  for (const b of p.blocks) {
+    for (const f of BLOCK_TYPES[b.type].fields) {
+      if (typeof b[f.key] === 'string') for (const name of placeholders(b[f.key])) used.add(name === 'value' && !p.columns.includes('value') ? p.columns[0] : name);
+    }
+  }
+  return used;
+}
+
+function addColumn(base) {
+  const p = plan();
+  const name = uniqueColumnName(base, p.columns);
+  p.columns.push(name);
+  for (const r of p.rows) r.push('');
+  return name;
+}
+
+// {{ }} button: use the first column no step uses yet (renaming a pristine
+// default column after the field), otherwise create a new column.
 function makeVariable(b, f) {
   const p = plan();
-  const old = b[f.key].trim();
-  b[f.key] = '{{value}}';
-  if (old && !p.data.trim()) {
-    p.data = old;
-    toast(`“${old}” moved to the Data tab. Add more items there.`, 'ok', 4000);
+  const used = referencedColumns(p);
+  let column = p.columns.find((c) => !used.has(c));
+  const suggested = nameFromSelector(b.selector);
+  if (column === 'value' && suggested && p.rows.every((r) => !r[0].trim())) {
+    const renamed = uniqueColumnName(suggested, p.columns.filter((c) => c !== 'value'));
+    p.columns[0] = renamed;
+    renameReferences(p, 'value', renamed);
+    column = renamed;
+  }
+  if (!column) {
+    if (p.columns.length >= LIMITS.columns) return toast(`A table can have up to ${LIMITS.columns} columns.`, 'error');
+    column = addColumn(suggested);
+  }
+  setFieldSource(b, f, column);
+}
+
+// Points a field at a column (seeding the table with its old text) or back to fixed text.
+function setFieldSource(b, f, column) {
+  const p = plan();
+  const old = b[f.key];
+  if (!column) {
+    b[f.key] = '';
   } else {
-    toast('This step now uses the data list.', 'ok');
+    b[f.key] = `{{${column}}}`;
+    const i = p.columns.indexOf(column);
+    const literal = columnRef(old) ? '' : old.trim();
+    if (literal && p.rows.every((r) => !r[i].trim())) {
+      if (!p.rows.length) p.rows.push(p.columns.map(() => ''));
+      p.rows[0][i] = literal;
+      toast(`“${literal}” moved to column ${column} in the Data tab.`, 'ok', 4000);
+    } else {
+      toast(`This step now uses column ${column}.`, 'ok');
+    }
   }
   save();
-  rerenderBlock(b.id);
+  renderBlocks();
   renderData();
 }
 
@@ -488,23 +567,225 @@ function closeMenus() {
 
 // ---------- Data & settings ----------
 
+const SHOWN_ROWS = 200;
+
 function renderData() {
   const p = plan();
-  if ($('dataInput').value !== p.data) $('dataInput').value = p.data;
-  for (const btn of $('splitMode').children) btn.setAttribute('aria-checked', String(btn.dataset.value === p.splitMode));
+  const cols = p.columns;
+
+  const head = h('tr', {},
+    h('th', { class: 'row-no', scope: 'col' }, '#'),
+    cols.map((c, ci) => h('th', { scope: 'col' }, h('div', { class: 'col-head' },
+      h('input', {
+        type: 'text',
+        size: 1,
+        value: c,
+        maxLength: LIMITS.columnName,
+        spellcheck: 'false',
+        'aria-label': `Column ${ci + 1} name`,
+        title: `Use as {{${c}}} in steps`,
+        onchange: (e) => renameColumn(ci, e.target),
+        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+      }),
+      cols.length > 1 && h('button', {
+        class: 'icon-btn danger', title: `Delete column ${c}`, 'aria-label': `Delete column ${c}`, onclick: () => deleteColumn(ci),
+      }, icon('trash', 13))))),
+    h('th', { class: 'add-col', scope: 'col' }, cols.length < LIMITS.columns && h('button', {
+      class: 'icon-btn', id: 'addColBtn', title: 'Add a column', 'aria-label': 'Add a column', onclick: onAddColumn,
+    }, icon('plus', 15))));
+
+  const body = p.rows.length
+    ? p.rows.slice(0, SHOWN_ROWS).map((row, ri) => h('tr', {},
+      h('td', { class: 'row-no' }, ri + 1),
+      cols.map((c, ci) => h('td', {}, h('input', {
+        type: 'text',
+        size: 1,
+        class: 'cell',
+        value: row[ci],
+        maxLength: LIMITS.text,
+        dataset: { r: String(ri), c: String(ci) },
+        'aria-label': `Row ${ri + 1}, ${c}`,
+      }))),
+      h('td', { class: 'row-del' }, h('button', {
+        class: 'icon-btn danger', title: 'Delete row', 'aria-label': `Delete row ${ri + 1}`, onclick: () => deleteRow(ri),
+      }, icon('trash', 13)))))
+    : [h('tr', {}, h('td', { class: 'empty-rows', colSpan: cols.length + 2 }, 'No rows yet. Add a row, or paste from a spreadsheet.'))];
+
+  $('dataTable').replaceChildren(h('thead', {}, head), h('tbody', {}, body));
+  $('rowsMore').hidden = p.rows.length <= SHOWN_ROWS;
+  $('rowsMore').textContent = `Showing ${SHOWN_ROWS} of ${p.rows.length} rows. Use Paste to replace them all.`;
   updateRunCount();
 }
 
 function updateRunCount() {
   const p = plan();
-  const rows = parseDataList(p.data, p.splitMode);
-  $('runCount').textContent = rows.length || '';
-  $('runSummary').textContent = rows.length
-    ? `${rows.length} run${rows.length === 1 ? '' : 's'}`
+  const runs = runRows(p).length;
+  $('runCount').textContent = runs || '';
+  $('runSummary').textContent = runs
+    ? `${runs} run${runs === 1 ? '' : 's'} · ${p.columns.length} value${p.columns.length === 1 ? '' : 's'} each`
     : `No data · runs ${p.repeat}×`;
-  const shown = rows.slice(0, 12).map((r, i) => h('span', { class: 'chip', title: r }, h('b', {}, i + 1), r));
-  if (rows.length > 12) shown.push(h('span', { class: 'chip more' }, `+${rows.length - 12} more`));
-  $('dataPreview').replaceChildren(...shown);
+}
+
+function focusCell(r, c) {
+  const cell = $('dataTable').querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+  cell?.focus();
+  cell?.select();
+}
+
+function addRow(focusCol = 0) {
+  const p = plan();
+  if (p.rows.length >= LIMITS.runs) return toast(`A table can have up to ${LIMITS.runs} rows.`, 'error');
+  p.rows.push(p.columns.map(() => ''));
+  save();
+  renderData();
+  focusCell(p.rows.length - 1, focusCol);
+}
+
+function deleteRow(ri) {
+  plan().rows.splice(ri, 1);
+  save();
+  renderData();
+}
+
+function onAddColumn() {
+  const p = plan();
+  if (p.columns.length >= LIMITS.columns) return;
+  const name = addColumn('column');
+  save();
+  renderData();
+  renderBlocks();
+  const input = $('dataTable').querySelectorAll('.col-head input')[p.columns.indexOf(name)];
+  input?.focus();
+  input?.select();
+}
+
+function renameColumn(ci, input) {
+  const p = plan();
+  const from = p.columns[ci];
+  const to = cleanColumnName(input.value);
+  if (to === from) { input.value = from; return; }
+  if (!to || p.columns.includes(to)) {
+    input.value = from;
+    return toast(to ? `There's already a column named ${to}.` : 'Column names use letters, numbers and _ and start with a letter.', 'error');
+  }
+  p.columns[ci] = to;
+  renameReferences(p, from, to);
+  save();
+  renderData();
+  renderBlocks();
+  toast(`Renamed to {{${to}}}. Steps were updated.`, 'ok');
+}
+
+async function deleteColumn(ci) {
+  const p = plan();
+  const name = p.columns[ci];
+  if (referencedColumns(p).has(name)) {
+    const ok = await modal({
+      title: `Delete column ${name}?`,
+      message: `Some steps use {{${name}}}. They will fail until you choose another value for them.`,
+      confirm: 'Delete column',
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  p.columns.splice(ci, 1);
+  for (const r of p.rows) r.splice(ci, 1);
+  save();
+  renderData();
+  renderBlocks();
+}
+
+// Spreads pasted cells into the table starting at (r, c), growing it as needed.
+function pasteGrid(grid, r, c) {
+  const p = plan();
+  const neededCols = Math.min(LIMITS.columns, c + Math.max(...grid.map((g) => g.length)));
+  while (p.columns.length < neededCols) addColumn('column');
+  const fit = grid.slice(0, LIMITS.runs - r);
+  fit.forEach((cells, i) => {
+    if (!p.rows[r + i]) p.rows[r + i] = p.columns.map(() => '');
+    cells.forEach((v, j) => { if (c + j < p.columns.length) p.rows[r + i][c + j] = v.slice(0, LIMITS.text); });
+  });
+  save();
+  renderData();
+  renderBlocks();
+  if (fit.length < grid.length) toast(`Only the first ${LIMITS.runs} rows were kept.`, 'error');
+}
+
+function bindTable() {
+  const table = $('dataTable');
+  table.addEventListener('input', (e) => {
+    const cell = e.target.closest('.cell');
+    if (!cell) return;
+    plan().rows[+cell.dataset.r][+cell.dataset.c] = cell.value;
+    save();
+    updateRunCount();
+  });
+  table.addEventListener('paste', (e) => {
+    const cell = e.target.closest('.cell');
+    const text = e.clipboardData.getData('text/plain');
+    if (!cell || !/[\t\n]/.test(text.trim())) return;
+    e.preventDefault();
+    pasteGrid(parsePaste(text, plan().columns.length), +cell.dataset.r, +cell.dataset.c);
+  });
+  table.addEventListener('keydown', (e) => {
+    const cell = e.target.closest('.cell');
+    if (!cell || e.key !== 'Enter') return;
+    e.preventDefault();
+    const r = +cell.dataset.r + (e.shiftKey ? -1 : 1);
+    if (r < 0) return;
+    if (r >= plan().rows.length) addRow(+cell.dataset.c);
+    else focusCell(r, +cell.dataset.c);
+  });
+  $('addRowBtn').addEventListener('click', () => addRow());
+  $('pasteBtn').addEventListener('click', pasteDialog);
+  $('clearRowsBtn').addEventListener('click', async () => {
+    if (!plan().rows.length) return;
+    const ok = await modal({ title: 'Clear all rows?', message: 'Columns are kept; every row is removed.', confirm: 'Clear rows', danger: true });
+    if (!ok) return;
+    plan().rows = [];
+    save();
+    renderData();
+  });
+}
+
+function pasteDialog() {
+  const p = plan();
+  const dlg = $('modal');
+  const area = h('textarea', {
+    placeholder: p.columns.length > 1 ? `${p.columns.join(', ')}\nalice, alice@example.com` : 'alice\nbob\ncarol',
+    'aria-label': 'Data to paste',
+    spellcheck: 'false',
+    maxLength: LIMITS.data,
+  });
+  const replace = h('input', { type: 'checkbox', checked: true });
+  const close = () => dlg.close();
+  const form = h('form', {
+    method: 'dialog',
+    onsubmit: (e) => {
+      e.preventDefault();
+      let grid = parsePaste(area.value, p.columns.length);
+      // Skip a header row that repeats the column names.
+      if (grid.length && grid[0].join(',').toLowerCase() === p.columns.join(',').toLowerCase()) grid = grid.slice(1);
+      close();
+      if (!grid.length) return;
+      if (replace.checked) p.rows = [];
+      pasteGrid(grid, p.rows.length, 0);
+      toast(`Added ${grid.length} row${grid.length === 1 ? '' : 's'}.`, 'ok');
+    },
+  },
+  h('h3', {}, 'Paste data'),
+  h('p', {}, p.columns.length > 1
+    ? `One row per line. Separate the ${p.columns.length} values with tabs (copied from a spreadsheet) or commas, in column order: ${p.columns.join(', ')}.`
+    : 'One value per line, or a single line separated by commas. Copying from a spreadsheet works too.'),
+  area,
+  h('label', { class: 'check' }, replace, 'Replace existing rows'),
+  h('div', { class: 'modal-actions' },
+    h('button', { type: 'button', class: 'btn btn-ghost', onclick: close }, 'Cancel'),
+    h('button', { type: 'submit', class: 'btn btn-primary' }, 'Add rows')));
+  dlg.replaceChildren(form);
+  dlg.oncancel = null;
+  dlg.showModal();
+  area.focus();
 }
 
 function renderSettings() {
@@ -528,15 +809,6 @@ function bindSettings() {
     });
   }
   $('onError').addEventListener('change', (e) => { plan().onError = e.target.value; save(); });
-  $('dataInput').maxLength = LIMITS.data;
-  $('dataInput').addEventListener('input', (e) => { plan().data = e.target.value; save(); updateRunCount(); });
-  $('splitMode').addEventListener('click', (e) => {
-    const v = e.target.closest('button')?.dataset.value;
-    if (!v) return;
-    plan().splitMode = v;
-    save();
-    renderData();
-  });
 }
 
 // ---------- Site access ----------
@@ -611,6 +883,9 @@ function togglePick(b, f) {
     if (!ok || !tab) return;
     await cancelPick();
     const requestId = newId();
+    // Register before the page can report a pick.
+    state.pick = { requestId, tabId: tab.id, blockId: b.id, key: f.key };
+    rerenderBlock(b.id);
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/selector.js', 'src/content/picker.js'] });
       await chrome.scripting.executeScript({
@@ -618,10 +893,10 @@ function togglePick(b, f) {
         func: (id) => window.__clickflowPicker.start(id),
         args: [requestId],
       });
-      state.pick = { requestId, tabId: tab.id, blockId: b.id, key: f.key };
-      rerenderBlock(b.id);
       toast('Click an element on the page. Esc cancels.');
     } catch (e) {
+      state.pick = null;
+      rerenderBlock(b.id);
       toast(friendlyError(e.message), 'error');
     }
   });
@@ -644,7 +919,7 @@ function onPicked(msg) {
   state.pick = null;
   const b = plan().blocks.find((x) => x.id === pick.blockId);
   if (!b) return;
-  if (msg.type === 'cf-picked' && typeof msg.selector === 'string') {
+  if (msg.type === 'cf-picked' && typeof msg.selector === 'string' && msg.selector.trim()) {
     b[pick.key] = msg.selector.slice(0, LIMITS.selector);
     delete state.run.errors[b.id];
     save();
@@ -705,7 +980,7 @@ function finishRecording() {
   renderAll();
   refreshTab();
   if (rec.added) {
-    toast(`Recorded ${rec.added} step${rec.added === 1 ? '' : 's'}. Press {{ }} on a field to use your data list.`, 'ok', 4500);
+    toast(`Recorded ${rec.added} step${rec.added === 1 ? '' : 's'}. Press {{ }} on a field to fill it from the Data table.`, 'ok', 4500);
   }
 }
 
@@ -837,6 +1112,9 @@ async function init() {
   $('addBtn').append(icon('plus', 14), 'Add step');
   $('runBtn').append(icon('play', 13), 'Run');
   $('stopBtn').append(icon('stop', 13), 'Stop');
+  $('addRowBtn').append(icon('plus', 13), 'Add row');
+  $('pasteBtn').append(icon('copy', 13), 'Paste…');
+  $('clearRowsBtn').append(icon('trash', 13), 'Clear');
   $('emptyRecordBtn').append(icon('record', 14), 'Start recording');
   $('privacyIcon').replaceWith(icon('shield'));
   buildAddMenu();
@@ -875,6 +1153,7 @@ async function init() {
   });
 
   bindSettings();
+  bindTable();
   setupDragAndDrop();
   watchTabs();
   window.addEventListener('pagehide', () => { stopRecording(); flushState(); });

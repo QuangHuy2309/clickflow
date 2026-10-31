@@ -6,7 +6,7 @@
 Shows ClickFlow's plan editor and run controls in Chrome's side panel, so it stays open next to the page being automated.
 
 **storage**
-Saves the user's automation plans (steps, selectors, data list, settings) locally on their device with chrome.storage.local. Nothing is synced or sent anywhere.
+Saves the user's automation plans (steps, selectors, data table, settings) locally on their device with chrome.storage.local. Nothing is synced or sent anywhere.
 
 **scripting**
 When the user presses Record, Run, or Pick, ClickFlow injects its own bundled script into the active tab. Depending on the button, the script records the user's clicks and typing as steps (password and payment fields are excluded), carries out the user's steps (click, type, select, scroll, wait), or lets them pick an element. No remote code is ever run.

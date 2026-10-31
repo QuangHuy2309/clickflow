@@ -66,18 +66,19 @@
     <section id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
       <div class="card">
         <div class="section-head">
-          <h2>Data list</h2>
+          <h2>Data table</h2>
           <span id="runSummary" class="pill pill-accent"></span>
         </div>
-        <p class="muted small">Each item is one run. Put <code>{{value}}</code> in a step, or press <span class="kbd">{{ }}</span> on a recorded field, to insert it.</p>
-        <div class="segmented" role="radiogroup" aria-label="Split items by" id="splitMode">
-          <button role="radio" data-value="auto">Auto</button>
-          <button role="radio" data-value="lines">One per line</button>
-          <button role="radio" data-value="comma">Comma</button>
+        <p class="muted small">Each <strong>row</strong> is one run and each <strong>column</strong> is a value you can use in steps, like <code>{{name}}</code>. You can paste straight from Excel or Google Sheets.</p>
+        <div class="table-wrap">
+          <table id="dataTable" class="data-table" aria-label="Data table"></table>
         </div>
-        <label class="sr-only" for="dataInput">Data list</label>
-        <textarea id="dataInput" rows="7" spellcheck="false" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com"></textarea>
-        <div id="dataPreview" class="chips" aria-label="Parsed items"></div>
+        <div id="rowsMore" class="rows-more" hidden></div>
+        <div class="table-actions">
+          <button id="addRowBtn" class="btn btn-ghost btn-small"></button>
+          <button id="pasteBtn" class="btn btn-ghost btn-small"></button>
+          <button id="clearRowsBtn" class="btn btn-ghost btn-small"></button>
+        </div>
         <p class="hint"><span id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
       </div>
     </section>

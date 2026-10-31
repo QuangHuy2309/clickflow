@@ -95,6 +95,8 @@ try {
   const panelPromise = context.waitForEvent('page');
   await sw.evaluate((url) => chrome.windows.create({ url, type: 'popup', focused: false, width: 400, height: 860 }), panelUrl);
   const panel = await panelPromise;
+  panel.on('pageerror', (e) => console.error('panel error:', e.message));
+  panel.on('console', (m) => { if (m.type() === 'error') console.error('panel console:', m.text()); });
   await panel.setViewportSize({ width: 380, height: 860 });
   await panel.waitForSelector('#runBtn svg');
   await site.bringToFront();
@@ -113,6 +115,8 @@ try {
   await site.click('#bump');
   await site.click('#name');
   await site.keyboard.type('alice');
+  await site.click('#email');
+  await site.keyboard.type('alice@x.com');
   await site.focus('#country');
   await site.keyboard.press('j'); // native select: typing picks "Japan"
   await site.click('#cityBtn');
@@ -121,29 +125,61 @@ try {
   await site.screenshot({ path: join(out, 'site-recording.png') });
   await panel.screenshot({ path: join(out, 'panel-recording.png') });
   await site.click('#submit');
-  await waitUntil(panel, () => document.querySelectorAll('#blockList > li.block').length >= 6);
+  await waitUntil(panel, () => document.querySelectorAll('#blockList > li.block').length >= 7);
   await panel.click('#recordBtn');
   await site.waitForSelector('clickflow-recorder', { state: 'detached' });
+  await waitUntil(panel, () => !document.getElementById('recordBtn').classList.contains('recording'));
 
-  assert.deepEqual(await titles(), ['Click', 'Type text', 'Select / find in list', 'Click', 'Select / find in list', 'Click']);
+  assert.deepEqual(await titles(), ['Click', 'Type text', 'Type text', 'Select / find in list', 'Click', 'Select / find in list', 'Click']);
   const summaries = await panel.locator('#blockList .summary').allTextContents();
   assert.match(summaries[1], /alice.*#name/);
-  assert.match(summaries[2], /Japan.*#country/);
-  assert.match(summaries[4], /City 5.*#cityList/);
-  assert.deepEqual(await site.locator('#log li').allTextContents(), ['name=alice country=jp city=City 5']);
-  ok('recorded 6 steps from real page use:', summaries);
+  assert.match(summaries[2], /alice@x\.com.*#email/);
+  assert.match(summaries[3], /Japan.*#country/);
+  assert.match(summaries[5], /City 5.*#cityList/);
+  assert.deepEqual(await site.locator('#log li').allTextContents(), ['name=alice email=alice@x.com country=jp city=City 5']);
+  ok('recorded 7 steps from real page use:', summaries);
 
-  // ---- Turn the typed name into a data-driven variable.
+  // ---- {{ }} on the name field: the default column is renamed to "name".
   await cards.nth(1).locator('.block-title').click();
   await cards.nth(1).locator('.var-btn').click();
-  assert.equal(await cards.nth(1).locator('textarea').inputValue(), '{{value}}');
+  assert.equal(await cards.nth(1).locator('textarea').inputValue(), '{{name}}');
+  // ---- {{ }} on the email field adds a second column, "email".
+  await cards.nth(2).locator('.block-title').click();
+  await cards.nth(2).locator('.var-btn').click();
+  // With 2+ columns, variable fields show a value-source dropdown instead of typing.
+  assert.equal(await cards.nth(1).locator('.source-select').inputValue(), 'name');
+  assert.equal(await cards.nth(2).locator('.source-select').inputValue(), 'email');
+  assert.equal(await cards.nth(2).locator('.uses-column code').textContent(), 'email');
+  ok('{{ }} created columns "name" and "email"; fields now show a column dropdown');
+
+  // ---- Use the dropdown on the city step to create a third column.
+  await cards.nth(5).locator('.block-title').click();
+  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), '__fixed__');
+  await cards.nth(5).locator('.source-select').selectOption('__new__');
+  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), 'cityList');
+  await panel.screenshot({ path: join(out, 'panel-columns.png') });
+
   await panel.click('#tab-data');
-  assert.equal(await panel.inputValue('#dataInput'), 'alice');
-  await panel.fill('#dataInput', 'alice\nbob\ncarol');
+  const headers = () => panel.locator('.col-head input').evaluateAll((els) => els.map((e) => e.value));
+  assert.deepEqual(await headers(), ['name', 'email', 'cityList']);
+  assert.deepEqual(await panel.locator('.cell').evaluateAll((els) => els.map((e) => e.value)), ['alice', 'alice@x.com', 'City 5']);
+
+  // Rename a column: steps follow.
+  await panel.locator('.col-head input').nth(2).fill('city');
+  await panel.locator('.col-head input').nth(2).press('Enter');
+  assert.deepEqual(await headers(), ['name', 'email', 'city']);
+
+  // Paste rows copied from a spreadsheet.
+  await panel.click('#pasteBtn');
+  await panel.fill('dialog textarea', 'name\temail\tcity\nalice\ta@x.com\tCity 5\nbob\tb@x.com\tCity 7\ncarol\tc@x.com\tCity 9');
+  await panel.click('dialog button[type=submit]');
   assert.equal(await panel.textContent('#runCount'), '3');
-  assert.equal(await panel.locator('#dataPreview .chip').count(), 3);
+  // Edit a cell directly.
+  await panel.locator('.cell[data-r="2"][data-c="0"]').fill('carol');
   await panel.screenshot({ path: join(out, 'panel-data.png') });
-  ok('{{ }} moved the recorded value into the data list');
+  await panel.click('#tab-steps');
+  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), 'city', 'rename updated the step');
+  ok('table: rename column, paste from spreadsheet, edit cell');
 
   await panel.click('#tab-settings');
   await panel.fill('#stepDelay', '50');
@@ -152,27 +188,27 @@ try {
   await panel.locator('#runDelay').dispatchEvent('change');
   await panel.click('#tab-steps');
 
-  // ---- Replay it 3 times.
+  // ---- Replay it 3 times with 3 values per run.
   await panel.click('#runBtn');
   await site.waitForFunction(() => document.querySelectorAll('#log li').length === 4, null, { timeout: 60000 });
   await waitUntil(panel, () => document.getElementById('runStatus').textContent.startsWith('Done'), 20000);
   const log = await site.locator('#log li').allTextContents();
   assert.deepEqual(log.slice(1), [
-    'name=alice country=jp city=City 5',
-    'name=bob country=jp city=City 5',
-    'name=carol country=jp city=City 5',
+    'name=alice email=a@x.com country=jp city=City 5',
+    'name=bob email=b@x.com country=jp city=City 7',
+    'name=carol email=c@x.com country=jp city=City 9',
   ]);
-  ok('replayed recording for 3 data rows:', log.slice(1));
+  ok('replayed recording for 3 rows × 3 columns:', log.slice(1));
   await panel.screenshot({ path: join(out, 'panel-done.png') });
   await site.screenshot({ path: join(out, 'playground-after.png') });
 
   // ---- Move up / down.
+  await cards.nth(3).hover();
+  await cards.nth(3).locator('[aria-label="Move up"]').click();
+  assert.equal((await titles())[2], 'Select / find in list');
   await cards.nth(2).hover();
-  await cards.nth(2).locator('[aria-label="Move up"]').click();
-  assert.equal((await titles())[1], 'Select / find in list');
-  await cards.nth(1).hover();
-  await cards.nth(1).locator('[aria-label="Move down"]').click();
-  assert.deepEqual(await titles(), ['Click', 'Type text', 'Select / find in list', 'Click', 'Select / find in list', 'Click']);
+  await cards.nth(2).locator('[aria-label="Move down"]').click();
+  assert.deepEqual(await titles(), ['Click', 'Type text', 'Type text', 'Select / find in list', 'Click', 'Select / find in list', 'Click']);
   ok('move up/down');
 
   // ---- A missing element fails with a readable error on that step.
@@ -181,7 +217,9 @@ try {
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').fill('300');
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').dispatchEvent('change');
   await panel.click('#tab-data');
-  await panel.fill('#dataInput', 'dave');
+  await panel.click('#pasteBtn');
+  await panel.fill('dialog textarea', 'dave\td@x.com\tCity 1');
+  await panel.click('dialog button[type=submit]');
   await panel.click('#tab-steps');
   await panel.click('#runBtn');
   await panel.waitForSelector('.block.is-error .block-error', { timeout: 20000 });
@@ -195,6 +233,7 @@ try {
   await panel.click('#addMenu button:has-text("Click")');
   await cards.last().locator('.pick-btn').click();
   await site.waitForSelector('clickflow-picker', { state: 'attached' });
+  await site.evaluate(() => window.scrollTo(0, 0));
   const box = await site.locator('#bump').boundingBox();
   await site.mouse.move(box.x + 5, box.y + 5);
   await site.screenshot({ path: join(out, 'picker.png') });

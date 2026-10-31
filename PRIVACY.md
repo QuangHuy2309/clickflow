@@ -10,7 +10,7 @@ ClickFlow is a browser extension that automates clicks and typing on web pages, 
 
 ## Data stored on your device
 
-The plans you create, including their steps, selectors, data lists, and settings, are saved in your browser's local extension storage (`chrome.storage.local`). This data never leaves your device. Removing the extension deletes it, and you can also delete individual plans in the extension.
+The plans you create, including their steps, selectors, data tables, and settings, are saved in your browser's local extension storage (`chrome.storage.local`). This data never leaves your device. Removing the extension deletes it, and you can also delete individual plans in the extension.
 
 That storage is not encrypted, so please don't put passwords or other sensitive information in your plans.
 

@@ -8,7 +8,9 @@ export const LIMITS = {
   note: 200,
   selector: 1000,
   text: 5000,
-  data: 200000,
+  data: 1000000,
+  columns: 20,
+  columnName: 30,
   runs: 10000,
   importBytes: 1000000,
 };
@@ -30,7 +32,7 @@ export const BLOCK_TYPES = {
     label: 'Type text',
     fields: [
       selector('selector', 'Input field', { required: true }),
-      textarea('text', 'Text', '{{value}}', { variable: true, hint: '{{value}} = current data row, {{index}} = run number' }),
+      textarea('text', 'Text', '{{value}}', { variable: true, hint: '{{column}} = a value from the Data table, {{index}} = run number' }),
       bool('clear', 'Clear the field first', true),
       bool('enter', 'Press Enter after typing', false),
       timeout(),
@@ -82,9 +84,23 @@ export const BLOCK_TYPES = {
 };
 
 export const PLAN_FIELDS = {
-  splitMode: ['auto', 'lines', 'comma'],
   onError: ['stop', 'skip'],
 };
+
+// Column names double as {{placeholders}}; "index" is reserved for the run number.
+const COLUMN_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function cleanColumnName(raw) {
+  const name = String(raw ?? '').trim().replace(/[^A-Za-z0-9_]+/g, '_').replace(/^[^A-Za-z_]+/, '')
+    .slice(0, LIMITS.columnName);
+  return COLUMN_RE.test(name) && name !== 'index' ? name : '';
+}
+
+export function uniqueColumnName(base, taken) {
+  const name = cleanColumnName(base) || 'value';
+  if (!taken.includes(name)) return name;
+  for (let i = 2; ; i++) if (!taken.includes(`${name}${i}`)) return `${name}${i}`;
+}
 
 export function newId() {
   return crypto.randomUUID();
@@ -103,8 +119,8 @@ export function newPlan(name = 'Untitled plan') {
     id: newId(),
     name,
     blocks: [],
-    data: '',
-    splitMode: 'auto',
+    columns: ['value'],
+    rows: [],
     stepDelay: 300,
     runDelay: 1000,
     repeat: 1,
@@ -174,6 +190,36 @@ export function sanitizeBlock(raw) {
   return block;
 }
 
+// Columns are unique valid names; rows are padded/cut to the column count and
+// the whole table is capped by LIMITS. Plans from v1.0 stored a single-column
+// list as `data` text, which is migrated here.
+function sanitizeTable(raw) {
+  const columns = [];
+  for (const c of Array.isArray(raw.columns) ? raw.columns.slice(0, LIMITS.columns) : []) {
+    const name = cleanColumnName(c);
+    if (name && !columns.includes(name)) columns.push(name);
+  }
+  if (!columns.length) columns.push('value');
+
+  let source = Array.isArray(raw.rows) ? raw.rows : null;
+  if (!source && typeof raw.data === 'string') {
+    const text = raw.data.slice(0, LIMITS.data);
+    const byLines = raw.splitMode === 'lines' || (raw.splitMode !== 'comma' && /\r?\n/.test(text.trim()));
+    source = text.split(byLines ? /\r?\n/ : ',').map((s) => s.trim()).filter(Boolean).map((s) => [s]);
+  }
+
+  const rows = [];
+  let size = 0;
+  for (const r of (source || []).slice(0, LIMITS.runs)) {
+    if (!Array.isArray(r)) continue;
+    const row = columns.map((_, i) => cleanString(r[i], LIMITS.text));
+    size += row.reduce((n, cell) => n + cell.length, 0);
+    if (size > LIMITS.data) break;
+    rows.push(row);
+  }
+  return { columns, rows };
+}
+
 // Accepts a bare plan or an export wrapper ({ format, plan }). Throws on a
 // malformed root; silently drops unknown keys and counts unusable blocks.
 // `fresh` regenerates every id so an import never collides with saved data.
@@ -193,12 +239,13 @@ export function sanitizePlan(raw, { fresh = false } = {}) {
     blocks.push(b);
   }
 
+  const { columns, rows } = sanitizeTable(raw);
   const plan = {
     id: !fresh && typeof raw.id === 'string' && ID_RE.test(raw.id) ? raw.id : base.id,
     name: cleanString(raw.name, LIMITS.name).trim() || base.name,
     blocks,
-    data: cleanString(raw.data, LIMITS.data),
-    splitMode: cleanEnum(raw.splitMode, PLAN_FIELDS.splitMode, base.splitMode),
+    columns,
+    rows,
     stepDelay: cleanNumber(raw.stepDelay, 0, 60000, base.stepDelay),
     runDelay: cleanNumber(raw.runDelay, 0, 600000, base.runDelay),
     repeat: cleanNumber(raw.repeat, 1, LIMITS.runs, base.repeat),

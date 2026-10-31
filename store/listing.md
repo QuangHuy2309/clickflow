@@ -28,8 +28,8 @@ OR BUILD A PLAN FROM SIMPLE STEPS
 
 Drag steps to reorder them, duplicate or disable them, and delete what you don't need.
 
-RUN IT FOR EVERY ITEM IN A LIST
-Paste a list of values, one per line or separated by commas, and ClickFlow runs your plan once for each item. One click turns a recorded value into {{value}}.
+RUN IT FOR EVERY ROW OF YOUR DATA
+Fill in a simple table, or paste one from Excel or Google Sheets. Each row is one run, and each column (name, email, city…) can go into any step. One click turns a recorded value into a column, and a dropdown lets you choose which column each field uses.
 
 POINT AND CLICK, NO CODE NEEDED
 Click "Pick" and then click any element on the page. ClickFlow works out a reliable selector for you.
