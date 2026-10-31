@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Results · ClickFlow test site</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 30px auto; padding: 0 16px; color: #1b1d29; }
+  textarea { width: 100%; box-sizing: border-box; padding: 10px 16px; border: 1px solid #cfd4e2; border-radius: 22px; font: inherit; resize: none; height: 44px; overflow: hidden; }
+  .r { margin: 18px 0; }
+  .r a { font-size: 18px; color: #1a0dab; }
+  #history { color: #6b7085; font-size: 13px; }
+</style>
+</head>
+<body>
+  <form action="results.html" method="get" role="search" id="sf">
+    <textarea name="q" rows="1" aria-label="Search" autocomplete="off"></textarea>
+  </form>
+  <h2 id="heading"></h2>
+  <div id="results"></div>
+  <p>Searched so far: <span id="history"></span></p>
+
+<script>
+  const gen = () => Math.random().toString(36).slice(2, 4) + Math.floor(Math.random() * 9 + 1) + Math.random().toString(36).slice(2, 5);
+  const q = new URLSearchParams(location.search).get('q') || '';
+  const box = document.querySelector('textarea[name=q]');
+  box.id = gen();
+  box.value = q;
+  box.addEventListener('keydown', (e) => {
+    if (e.keyCode === 13 && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById('sf').requestSubmit();
+    }
+  });
+  document.getElementById('heading').textContent = `Results for ${q}`;
+
+  const history = JSON.parse(localStorage.getItem('queries') || '[]');
+  history.push(q);
+  localStorage.setItem('queries', JSON.stringify(history));
+  document.getElementById('history').textContent = history.join(', ');
+
+  // Obfuscated classes and a varying number of wrapper elements, so
+  // structural selectors recorded on one load won't match the next.
+  const results = document.getElementById('results');
+  for (let i = 1; i <= 3; i++) {
+    let parent = results;
+    for (let w = 0; w < Math.floor(Math.random() * 3); w++) {
+      const d = document.createElement('div');
+      d.className = gen();
+      parent.append(d);
+      parent = d;
+    }
+    const r = document.createElement('div');
+    r.className = `r ${gen()}`;
+    const a = document.createElement('a');
+    a.className = gen();
+    a.href = `article.html?title=${encodeURIComponent(`${q}-${i}`)}`;
+    a.textContent = `${q} — result ${i}`;
+    r.append(a);
+    parent.append(r);
+  }
+</script>
+</body>
+</html>

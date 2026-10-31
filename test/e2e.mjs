@@ -25,12 +25,17 @@ const manifest = JSON.parse(readFileSync(join(ext, 'manifest.json'), 'utf8'));
 manifest.host_permissions = ['http://127.0.0.1/*'];
 writeFileSync(join(ext, 'manifest.json'), JSON.stringify(manifest));
 
+// Serves only the known test pages (no path traversal).
+const PAGES = new Set(['playground.html', 'search.html', 'results.html', 'article.html']);
 const server = createServer((req, res) => {
+  const name = new URL(req.url, 'http://x').pathname.slice(1);
+  if (!PAGES.has(name)) { res.statusCode = 404; res.end(); return; }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.end(readFileSync(join(root, 'test', 'playground.html')));
+  res.end(readFileSync(join(root, 'test', name)));
 }).listen(0, '127.0.0.1');
 await new Promise((r) => server.once('listening', r));
-const pageUrl = `http://127.0.0.1:${server.address().port}/playground.html`;
+const base = `http://127.0.0.1:${server.address().port}`;
+const pageUrl = `${base}/playground.html`;
 
 const context = await chromium.launchPersistentContext(join(work, 'profile'), {
   headless: true,
@@ -132,9 +137,10 @@ try {
 
   assert.deepEqual(await titles(), ['Click', 'Type text', 'Type text', 'Select / find in list', 'Click', 'Select / find in list', 'Click']);
   const summaries = await panel.locator('#blockList .summary').allTextContents();
-  assert.match(summaries[1], /alice.*#name/);
-  assert.match(summaries[2], /alice@x\.com.*#email/);
-  assert.match(summaries[3], /Japan.*#country/);
+  // Form fields are recorded by their name attribute (ids can be generated).
+  assert.match(summaries[1], /alice.*input\[name="name"\]/);
+  assert.match(summaries[2], /alice@x\.com.*input\[name="email"\]/);
+  assert.match(summaries[3], /Japan.*select\[name="country"\]/);
   assert.match(summaries[5], /City 5.*#cityList/);
   assert.deepEqual(await site.locator('#log li').allTextContents(), ['name=alice email=alice@x.com country=jp city=City 5']);
   ok('recorded 7 steps from real page use:', summaries);
@@ -270,6 +276,124 @@ try {
   await panel.waitForTimeout(400);
   await panel.screenshot({ path: join(out, 'panel-dark.png') });
   await panel.emulateMedia({ colorScheme: 'light' });
+
+  // ================= Google-like search site =================
+  // Regression tests for: Enter not submitting a <textarea> search box with
+  // no submit button, keyCode-checking handlers, generated ids/classes, and
+  // the recorder missing actions (Enter in a textarea, mousedown-only
+  // suggestions, typing right before a navigation).
+  const newPlanNamed = async (name) => {
+    await panel.click('#planMenuBtn');
+    await panel.click('[data-action="new"]');
+    await panel.fill('dialog input', name);
+    await panel.click('dialog button[type=submit]');
+    await panel.waitForSelector('#emptyState:not([hidden])');
+  };
+  const openSite = async (path) => {
+    await site.goto(`${base}/${path}`);
+    await site.bringToFront();
+    await waitUntil(panel, () => !document.getElementById('siteChip').hidden, 5000);
+  };
+  const recorderReady = () => site.waitForSelector('clickflow-recorder', { state: 'attached', timeout: 10000 });
+  const stopRecording = async () => {
+    await panel.click('#recordBtn');
+    await waitUntil(panel, () => !document.getElementById('recordBtn').classList.contains('recording'));
+  };
+  const runAndWait = async () => {
+    await panel.evaluate(() => { document.getElementById('runStatus').textContent = ''; });
+    await panel.click('#runBtn');
+    await waitUntil(panel, () => /^(Done|Finished|Stopped)/.test(document.getElementById('runStatus').textContent), 30000);
+    return panel.textContent('#runStatus');
+  };
+
+  // ---- Selector builder ignores generated ids/classes.
+  await openSite('results.html?q=cats');
+  await site.addScriptTag({ path: join(root, 'src', 'content', 'selector.js') });
+  const built = await site.evaluate(() => ({
+    box: window.__clickflowSelector.build(document.querySelector('textarea')),
+    link: window.__clickflowSelector.build(document.querySelector('.r a')),
+    generated: ['ti6dpd', 'C6AK7c', ':r3:', 'ember1234', 'submit-btn', 'searchBox', 'main']
+      .map(window.__clickflowSelector.looksGenerated),
+  }));
+  assert.equal(built.box, 'textarea[name="q"]', 'form field uses its name, not the random id');
+  assert.equal(built.link, 'a[href="article.html?title=cats-1"]', 'link uses its href, not obfuscated classes');
+  assert.deepEqual(built.generated, [true, true, true, true, false, false, false]);
+  ok('selector builder prefers name/href and skips generated ids/classes');
+
+  // ---- Record: type in a <textarea>, press Enter (no submit button), click a result.
+  await newPlanNamed('Search flow');
+  await openSite('search.html');
+  await panel.click('#emptyRecordBtn');
+  await recorderReady();
+  await site.click('textarea[name=q]');
+  await site.keyboard.type('cats');
+  await Promise.all([site.waitForURL(/results\.html\?q=cats/), site.keyboard.press('Enter')]);
+  await recorderReady();
+  await Promise.all([site.waitForURL(/article\.html/), site.click('text=cats — result 1')]);
+  await recorderReady();
+  await stopRecording();
+  assert.deepEqual(await titles(), ['Type text', 'Click']);
+  await cards.nth(0).locator('.block-title').click();
+  assert.equal(await cards.nth(0).locator('.input-group input').first().inputValue(), 'textarea[name="q"]');
+  assert.equal(await cards.nth(0).locator('textarea').inputValue(), 'cats');
+  assert.equal(await cards.nth(0).locator('.check', { hasText: 'Press Enter' }).locator('input').isChecked(), true,
+    'Enter in a textarea search box was recorded');
+  await cards.nth(1).locator('.block-title').click();
+  assert.equal(await cards.nth(1).locator('.input-group input').first().inputValue(), 'a[href="article.html?title=cats-1"]');
+  ok('recorded textarea + Enter across a page navigation, and the result click');
+
+  // ---- Replay it: Enter must submit the form and the click must find the link.
+  await openSite('search.html');
+  assert.match(await runAndWait(), /^Done/);
+  await site.waitForURL(/article\.html\?title=cats-1/);
+  assert.equal(await site.textContent('#title'), 'cats-1');
+  ok('replay: Enter submitted the search, result link found on a fresh page load');
+
+  // ---- Same search for each value of a data set, 2 runs.
+  await cards.nth(1).locator('.switch input').setChecked(false);
+  await cards.nth(0).locator('.source-select').selectOption('__new__');
+  await panel.click('#tab-data');
+  await panel.locator('.dataset').last().locator('textarea').fill('dogs\nbirds');
+  await panel.click('#tab-settings');
+  await panel.click('#matchLongestBtn');
+  assert.equal(await panel.inputValue('#runs'), '2');
+  await panel.click('#tab-steps');
+  await openSite('search.html');
+  await site.evaluate(() => localStorage.clear());
+  assert.match(await runAndWait(), /^Done/);
+  await site.waitForURL(/results\.html\?q=birds/);
+  assert.equal(await site.textContent('#history'), 'dogs, birds');
+  ok('searched each data set value in turn:', await site.textContent('#history'));
+
+  // ---- Record a suggestion that acts on mousedown and vanishes before "click".
+  await newPlanNamed('Suggestions');
+  await openSite('search.html');
+  await panel.click('#emptyRecordBtn');
+  await recorderReady();
+  await site.click('textarea[name=q]');
+  await site.keyboard.type('do');
+  await site.waitForSelector('ul[role=listbox] li:has-text("dogs videos")');
+  await Promise.all([site.waitForURL(/q=dogs\+videos/), site.click('ul[role=listbox] li:has-text("dogs videos")')]);
+  await recorderReady();
+  await stopRecording();
+  assert.deepEqual(await titles(), ['Type text', 'Click'], 'mousedown-only suggestion was recorded');
+  await openSite('search.html');
+  assert.match(await runAndWait(), /^Done/);
+  await site.waitForURL(/q=dogs\+videos/);
+  assert.equal(await site.textContent('#heading'), 'Results for dogs videos');
+  ok('recorded and replayed a mousedown-only suggestion');
+
+  // ---- Enter on a field with no form, handled only by a keyCode === 13 check.
+  await newPlanNamed('Quick search');
+  await panel.click('#emptyAddBtn');
+  await panel.click('#addMenu button:has-text("Type text")');
+  await cards.nth(0).locator('.input-group input').first().fill('#quick');
+  await cards.nth(0).locator('textarea').fill('hello');
+  await cards.nth(0).locator('.check', { hasText: 'Press Enter' }).locator('input').check();
+  await openSite('search.html');
+  assert.match(await runAndWait(), /^Done/);
+  assert.equal(await site.textContent('#quickOut'), 'Searched: hello');
+  ok('Enter reached a keyCode-checking handler on a field with no form');
 
   // ---- Restricted pages are refused. Without the "tabs" permission Chrome
   // hides chrome:// URLs, so the panel reports "restricted" or "can't see".

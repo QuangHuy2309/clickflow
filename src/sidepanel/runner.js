@@ -7,6 +7,39 @@ import { friendlyError } from './site.js';
 
 const ACTIONS_FILE = 'src/content/actions.js';
 
+// Runs in the page's own JS world (serialized by chrome.scripting; it can't
+// use anything from this module). Events built in an extension's isolated
+// world report keyCode/which as 0 to page scripts, and many sites check
+// keyCode === 13, so Enter is dispatched from here instead. If no page script
+// reacted (nothing cancelled the keydown, no navigation started), the field's
+// form is submitted, which is what a real Enter does in a search box with no
+// submit button.
+async function pressEnterInPage(selector) {
+  const el = document.querySelector(selector) || document.activeElement;
+  if (!el) return false;
+  const fire = (type) => {
+    const ev = new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(ev, 'keyCode', { get: () => 13 });
+    Object.defineProperty(ev, 'which', { get: () => 13 });
+    Object.defineProperty(ev, 'charCode', { get: () => (type === 'keypress' ? 13 : 0) });
+    return el.dispatchEvent(ev);
+  };
+  const startUrl = location.href;
+  let leaving = false;
+  const onLeave = () => { leaving = true; };
+  window.addEventListener('beforeunload', onLeave);
+  const notCancelled = fire('keydown');
+  fire('keypress');
+  fire('keyup');
+  await new Promise((r) => setTimeout(r, 250));
+  window.removeEventListener('beforeunload', onLeave);
+  const form = el.form || el.closest?.('form');
+  if (notCancelled && !leaving && location.href === startUrl && form) {
+    try { form.requestSubmit(); } catch { form.submit(); }
+  }
+  return true;
+}
+
 export class Runner {
   constructor(hooks = {}) {
     this.hooks = hooks;
@@ -123,8 +156,14 @@ export class Runner {
         func: (b) => window.__clickflow.run(b),
         args: [block],
       });
+      const result = res?.result ?? { ok: false, error: 'The page did not respond.' };
+      if (result.ok && block.type === 'type' && block.enter) {
+        // A navigation triggered by Enter can tear the frame down mid-call; that's success.
+        await chrome.scripting.executeScript({ target, world: 'MAIN', func: pressEnterInPage, args: [block.selector] })
+          .catch(() => {});
+      }
       await this._waitForLoad();
-      return res?.result ?? { ok: false, error: 'The page did not respond.' };
+      return result;
     } catch (e) {
       return { ok: false, error: friendlyError(e.message) };
     }

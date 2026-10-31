@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Article · ClickFlow test site</title>
+<style>body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }</style>
+</head>
+<body>
+  <p><a href="search.html">← Back to search</a></p>
+  <h1 id="title"></h1>
+  <script>
+    document.getElementById('title').textContent = new URLSearchParams(location.search).get('title') || '';
+  </script>
+</body>
+</html>

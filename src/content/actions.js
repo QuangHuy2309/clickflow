@@ -119,7 +119,9 @@
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
   }
 
-  function typeInto(el, text, clear, enter) {
+  // Enter is pressed afterwards by the runner from the page's own JS world
+  // (see pressEnterInPage in runner.js), so page handlers see keyCode 13.
+  function typeInto(el, text, clear) {
     el.scrollIntoView({ block: 'center' });
     flash(el);
     el.focus({ preventScroll: true });
@@ -136,18 +138,6 @@
       throw new StepError('That is a dropdown — use a "Select / find in list" step instead.');
     } else {
       throw new StepError('That element is not a text field.');
-    }
-    if (enter) pressEnter(el);
-  }
-
-  function pressEnter(el) {
-    const init = { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true };
-    const proceed = el.dispatchEvent(new KeyboardEvent('keydown', init));
-    el.dispatchEvent(new KeyboardEvent('keypress', init));
-    el.dispatchEvent(new KeyboardEvent('keyup', init));
-    // Synthetic key events don't submit forms on their own.
-    if (proceed && el instanceof HTMLInputElement && el.form) {
-      try { el.form.requestSubmit(); } catch { /* form has no submit path */ }
     }
   }
 
@@ -239,7 +229,7 @@
           clickElement(await waitFor(b.selector, b.timeout));
           break;
         case 'type':
-          typeInto(await waitFor(b.selector, b.timeout), b.text, b.clear, b.enter);
+          typeInto(await waitFor(b.selector, b.timeout), b.text, b.clear);
           break;
         case 'select':
           await selectValue(b);

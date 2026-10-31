@@ -21,10 +21,11 @@
     && (el.type === 'password' || /cc-|one-time-code|new-password|current-password/.test(el.autocomplete || ''));
 
   const textOf = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+  const isGone = (el) => !el.isConnected || el.getClientRects().length === 0;
 
   function send(step, el) {
     if (!session) return;
-    if (el) flash(el);
+    if (el?.isConnected) flash(el);
     chrome.runtime.sendMessage({ type: 'cf-rec', sessionId: session.id, step }).catch(() => {});
   }
 
@@ -73,22 +74,49 @@
     clearTimeout(pending?.timer);
     session.typing.delete(el);
     const secret = isSecret(el);
-    const value = el.isContentEditable ? el.innerText : el.value;
-    send({ type: 'type', selector: buildSelector(el), text: secret ? '' : value, clear: true, enter, secret }, el);
+    const value = pending?.value ?? (el.isContentEditable ? el.innerText : el.value);
+    send({ type: 'type', selector: pending?.selector ?? buildSelector(el), text: secret ? '' : value, clear: true, enter, secret }, el);
+  }
+
+  function flushAllTyping() {
+    for (const field of [...session.typing.keys()]) flushTyping(field);
   }
 
   function onInput(e) {
     const el = e.target;
     if (!e.isTrusted || !isTextField(el)) return;
+    if (session.enterCandidate === el) session.enterCandidate = null;
     const pending = session.typing.get(el);
     clearTimeout(pending?.timer);
-    session.typing.set(el, { timer: setTimeout(() => flushTyping(el), 700) });
+    // Keep what the user typed now: page scripts (autocomplete) may rewrite
+    // the field or replace the element before we flush.
+    session.typing.set(el, {
+      selector: pending?.selector ?? buildSelector(el),
+      value: el.isContentEditable ? el.innerText : el.value,
+      timer: setTimeout(() => flushTyping(el), 700),
+    });
   }
 
   function onKeydown(e) {
-    if (e.isTrusted && e.key === 'Enter' && isTextField(e.target) && !(e.target instanceof HTMLTextAreaElement)) {
-      flushTyping(e.target, true);
+    if (!e.isTrusted || e.key !== 'Enter' || !isTextField(e.target)) return;
+    const el = e.target;
+    if (el instanceof HTMLTextAreaElement || el.isContentEditable) {
+      // Enter in a multi-line field is usually a new line, but search boxes
+      // (Google's is a <textarea>) use it to submit. Decide after the page's
+      // own handlers have run; see onKeydownAfterPage.
+      if (!e.shiftKey) session.enterCandidate = el;
+      return;
     }
+    flushTyping(el, true);
+  }
+
+  // Bubble phase on window: the page's handlers have run by now.
+  function onKeydownAfterPage(e) {
+    const el = session?.enterCandidate;
+    if (!el || e.target !== el) return;
+    session.enterCandidate = null;
+    // The page cancelled the new line, so Enter meant "submit".
+    if (e.defaultPrevented) flushTyping(el, true);
   }
 
   function onFocusOut(e) {
@@ -118,46 +146,115 @@
     return null;
   }
 
-  function onClick(e) {
-    if (!e.isTrusted || !(e.target instanceof Element)) return;
+  function clickTarget(e) {
+    if (!(e.target instanceof Element)) return null;
     const el = e.target.closest(ACTIONABLE) || e.target;
-    if (isTextField(el) || el instanceof HTMLSelectElement || el instanceof HTMLOptionElement) return;
+    if (isTextField(el) || el instanceof HTMLSelectElement || el instanceof HTMLOptionElement) return null;
+    if (el instanceof HTMLLabelElement && el.control && isTextField(el.control)) return null;
+    return el;
+  }
+
+  // The step for clicking `el`. An item in a small scrollable list becomes a
+  // "find in list" step, which keeps working when the item moves or the list
+  // lazy-loads.
+  function describeClick(el) {
+    const text = textOf(el);
+    const list = text && text.length <= 80 && (el.matches(LIST_ITEMS) || el.closest(LIST_ITEMS)) ? scrollableListFor(el) : null;
+    if (list && list.matches(`${LIST_CONTAINERS},[class*=list],[class*=menu],[class*=dropdown]`)) {
+      return { type: 'select', selector: buildSelector(list), match: text, matchMode: 'exact' };
+    }
+    return { type: 'click', selector: buildSelector(el) };
+  }
+
+  // Some widgets (autocomplete suggestions, menus) act on mousedown and
+  // remove the element before "click" fires. Describe the target on
+  // pointerdown so it can still be recorded if no click follows.
+  function onPointerDown(e) {
+    if (!e.isTrusted || e.button !== 0) return;
+    const el = clickTarget(e);
+    session.pressed = null;
+    if (!el) return;
+    flushAllTyping();
+    session.pressed = { el, step: describeClick(el), done: false };
+  }
+
+  function onPointerUp() {
+    const pressed = session.pressed;
+    if (!pressed) return;
+    setTimeout(() => {
+      if (session && session.pressed === pressed && !pressed.done && isGone(pressed.el)) {
+        pressed.done = true;
+        send(pressed.step, null);
+      }
+    }, 400);
+  }
+
+  function onClick(e) {
+    if (!e.isTrusted) return;
+    const el = clickTarget(e);
+    if (!el) return;
 
     // A label click also clicks its control; record only one of them.
     const now = Date.now();
     const last = session.lastClick;
     session.lastClick = { el, t: now };
     if (last && now - last.t < 150 && last.el instanceof HTMLLabelElement && last.el.control === el) return;
-    if (el instanceof HTMLLabelElement && el.control && isTextField(el.control)) return;
 
-    // Typing that's still pending should come before this click.
-    for (const field of [...session.typing.keys()]) flushTyping(field);
-
-    // An item in a small scrollable list becomes a "find in list" step, which
-    // keeps working when the item's position changes or the list lazy-loads.
-    const text = textOf(el);
-    const list = text && text.length <= 80 && (el.matches(LIST_ITEMS) || el.closest(LIST_ITEMS)) ? scrollableListFor(el) : null;
-    if (list && list.matches(`${LIST_CONTAINERS},[class*=list],[class*=menu],[class*=dropdown]`)) {
-      send({ type: 'select', selector: buildSelector(list), match: text, matchMode: 'exact' }, el);
-      return;
+    const pressed = session.pressed;
+    flushAllTyping();
+    if (pressed && (pressed.el === el || pressed.el.contains(el) || el.contains(pressed.el))) {
+      if (pressed.done) return;
+      pressed.done = true;
+      // If the pressed element vanished or moved on mousedown, the browser
+      // sends "click" to a common ancestor (often <body>). The user meant
+      // the element they pressed.
+      if (el !== pressed.el && el.contains(pressed.el)) {
+        send(pressed.step, pressed.el);
+        return;
+      }
     }
-    send({ type: 'click', selector: buildSelector(el) }, el);
+    send(describeClick(el), el);
+  }
+
+  // The page is navigating away: send anything still pending before the
+  // recorder is torn down (it's re-attached on the next page).
+  function onPageHide() {
+    if (!session) return;
+    if (session.enterCandidate) {
+      flushTyping(session.enterCandidate, true);
+      session.enterCandidate = null;
+    }
+    const pressed = session.pressed;
+    if (pressed && !pressed.done) {
+      pressed.done = true;
+      send(pressed.step, null);
+    }
+    flushAllTyping();
   }
 
   // ---- Lifecycle ----
 
-  const LISTENERS = [['click', onClick], ['input', onInput], ['change', onChange], ['keydown', onKeydown], ['focusout', onFocusOut]];
+  const DOC_LISTENERS = [
+    ['pointerdown', onPointerDown], ['pointerup', onPointerUp], ['click', onClick], ['input', onInput],
+    ['change', onChange], ['keydown', onKeydown], ['focusout', onFocusOut],
+  ];
 
   function start(id) {
     stop();
-    session = { id, typing: new Map(), lastClick: null, ui: buildUi() };
-    for (const [t, fn] of LISTENERS) document.addEventListener(t, fn, true);
+    session = { id, typing: new Map(), lastClick: null, pressed: null, enterCandidate: null, ui: buildUi() };
+    for (const [t, fn] of DOC_LISTENERS) document.addEventListener(t, fn, true);
+    window.addEventListener('keydown', onKeydownAfterPage);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
   }
 
   function stop() {
     if (!session) return;
-    for (const field of [...session.typing.keys()]) flushTyping(field);
-    for (const [t, fn] of LISTENERS) document.removeEventListener(t, fn, true);
+    flushAllTyping();
+    for (const [t, fn] of DOC_LISTENERS) document.removeEventListener(t, fn, true);
+    window.removeEventListener('keydown', onKeydownAfterPage);
+    window.removeEventListener('pagehide', onPageHide);
+    window.removeEventListener('beforeunload', onPageHide);
     session.ui.host.remove();
     session = null;
   }
