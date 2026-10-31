@@ -76,6 +76,12 @@ Only automate sites you're allowed to automate, and follow each site's terms of 
 
 See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md). In short: ClickFlow collects nothing and makes no network requests, and it can only touch the sites you explicitly allow.
 
+## Author
+
+Made by **Quang Huy** ([@QuangHuy2309](https://github.com/QuangHuy2309)).
+
+Questions, ideas, or feedback? Email me at [lqhuy2309@gmail.com](mailto:lqhuy2309@gmail.com), or [open an issue](https://github.com/QuangHuy2309/clickflow/issues).
+
 ## License
 
 [MIT](LICENSE)
