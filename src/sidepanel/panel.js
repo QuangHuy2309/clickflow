@@ -1325,6 +1325,7 @@ async function init() {
     else if (msg.type === 'cf-stop' && sender.tab?.id === runner.tabId) runner.stop();
   });
 
+  $('appVersion').textContent = `v${chrome.runtime.getManifest().version}`;
   bindSettings();
   bindData();
   setupDragAndDrop();

@@ -833,3 +833,10 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.about p { margin: 0 0 4px; }
+.about a { color: var(--accent); }
+.coffee { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.coffee summary { cursor: pointer; font-weight: 600; color: var(--accent); width: fit-content; }
+.coffee p { margin: 8px 0; }
+.coffee img { display: block; margin: 0 auto; border-radius: 10px; background: #fff; height: auto; }
