@@ -52,3 +52,16 @@ Regression tests are in `test/e2e.mjs`:
 - **Symptom:** with the log open, resizing it didn't visibly shorten the steps. The log was a floating card with margins and a shadow, and there was empty space between the steps and the log.
 - **Fix (`panel.css`, `panel.js`):** the log is docked as a split view: full width, a divider on its top edge, a default height of 38vh, and `flex: none` under `main` (which is `flex: 1`). It can be dragged from the divider or the header, the running step stays in view while dragging, and double-clicking resets the size.
 - **Guard:** e2e checks that the steps area ends where the log begins, and that it shrinks by exactly the amount the log grows.
+
+## Scrolling wasn't recorded (follow-up)
+
+- **Symptom:** recording a flow that scrolls produced no Scroll steps.
+- **Root cause:** the recorder never listened for scrolling. When added, the first version recorded 0 px. Chrome scrolls on the compositor *before* passive wheel handlers run, so a "before" position read in the wheel handler was already the "after" position.
+- **Fix (`recorder.js`):**
+  - Each scroller (the page, or one section of it) is tracked on its own, from the last position seen in its `scroll` events.
+  - A scroll counts only within 800 ms of the user's wheel, touch, scroll key, or scrollbar press. A scroll that lands up to 150 ms *before* that input is claimed too.
+  - Movement is summed and sent 600 ms after it stops. Pending scrolls are sent before the next click or typing, to keep the order.
+  - A section that a following "find in list" step will scroll anyway is dropped.
+  - The panel merges back-to-back scrolls of the same target.
+- **Guard:** e2e "recorded section and whole-page scrolls separately…": a section scroll and a page scroll, plus a script scroll that must be ignored, replayed to the same positions.
+- **Lesson:** don't read "before" state in a passive input handler. Track state from the events that change it.

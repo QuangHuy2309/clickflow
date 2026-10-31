@@ -1128,7 +1128,7 @@ function finishRecording() {
   }
 }
 
-const RECORDABLE = new Set(['click', 'type', 'select']);
+const RECORDABLE = new Set(['click', 'type', 'select', 'scroll']);
 
 function onRecorded(msg, sender) {
   const rec = state.rec;
@@ -1151,6 +1151,14 @@ function onRecorded(msg, sender) {
     }
   }
   const last = p.blocks.at(-1);
+  // Consecutive scrolls of the same thing are one step.
+  if (b.type === 'scroll' && last?.type === 'scroll' && last.mode === 'by' && last.selector === b.selector && rec.added > 0) {
+    last.amount = Math.max(-100000, Math.min(100000, last.amount + b.amount));
+    save();
+    rerenderBlock(last.id);
+    cardFor(last.id)?.classList.add('just-added');
+    return;
+  }
   // Consecutive typing into the same field is one step.
   if (b.type === 'type' && last?.type === 'type' && last.selector === b.selector) {
     last.text = b.text;

@@ -436,6 +436,40 @@ try {
   assert.equal(await site.textContent('#ctxOut'), 'renamed, double-clicked');
   ok('recorded and replayed right-click (context menu) and double-click:', mouseSteps);
 
+  // ---- Scrolling: a section of the page (#notes) and the whole page are
+  // recorded as separate steps; scrolls made by page scripts are not.
+  await newPlanNamed('Scrolling');
+  await openSite('playground.html');
+  await panel.click('#emptyRecordBtn');
+  await recorderReady();
+  const notesBox = await site.locator('#notes').boundingBox();
+  await site.mouse.move(notesBox.x + notesBox.width / 2, notesBox.y + notesBox.height / 2);
+  await site.mouse.wheel(0, 200);
+  await site.waitForTimeout(1000);
+  await site.mouse.move(450, 20); // over the page itself, outside the section
+  await site.mouse.wheel(0, 500);
+  await site.waitForTimeout(1000);
+  await site.evaluate(() => window.scrollBy(0, 300)); // a page script, not the user
+  await site.waitForTimeout(1000);
+  await site.mouse.wheel(0, -200);
+  await site.waitForTimeout(1000); // the last scroll is sent once it rests
+  const recordedNotes = await site.evaluate(() => document.getElementById('notes').scrollTop);
+  await stopRecording();
+  const scrollSteps = await panel.locator('#blockList .summary').allTextContents();
+  assert.equal(scrollSteps.length, 2, `steps: ${scrollSteps.join(' | ')}`);
+  assert.match(scrollSteps[0], /^Down \d+px in #notes$/, 'section scroll targets the section');
+  // Down 500, then up 200: one page step of the net 300 px. The 300 px a page
+  // script scrolled in between is not counted.
+  assert.equal(scrollSteps[1], 'Down 300px on page', 'page scrolls are a separate page step, script scroll ignored');
+  assert.equal(Number(scrollSteps[0].match(/\d+/)[0]), recordedNotes, 'section amount matches what the user scrolled');
+  await openSite('playground.html');
+  assert.match(await runAndWait(), /^Done/);
+  await site.waitForTimeout(400);
+  const replayed = await site.evaluate(() => ({ notes: document.getElementById('notes').scrollTop, page: Math.round(window.scrollY) }));
+  assert.equal(replayed.notes, recordedNotes, 'replay scrolled the section by the same amount');
+  assert.ok(Math.abs(replayed.page - 300) <= 2, `replay scrolled the page down 500 then up 200 (at ${replayed.page})`);
+  ok('recorded section and whole-page scrolls separately and replayed them:', scrollSteps);
+
   // ---- Screenshot steps: whole page and a single element.
   await newPlanNamed('Screenshots');
   await panel.click('#emptyAddBtn');

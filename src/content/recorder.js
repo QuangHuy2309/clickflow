@@ -1,5 +1,5 @@
 // Injected on demand (after selector.js) when the user presses Record.
-// Watches the user's own (trusted) clicks, typing and dropdown changes and
+// Watches the user's own (trusted) clicks, typing, dropdown changes and scrolls, and
 // reports each one to the panel as a step. Never records password or payment
 // field contents.
 (() => {
@@ -79,6 +79,7 @@
   }
 
   function flushAllTyping() {
+    flushAllScrolls();
     for (const field of [...session.typing.keys()]) flushTyping(field);
   }
 
@@ -136,6 +137,79 @@
     }
   }
 
+  // ---- Scrolling ----
+  // "scroll" events don't say who scrolled (page scripts scroll too), so a
+  // scroll counts only around the user's own wheel, touch, scroll key or
+  // scrollbar drag. Each scroller (the page, or one section of it) is
+  // tracked on its own; its movement is summed and sent once it rests.
+  // Chrome scrolls on the compositor before input handlers run, so the
+  // starting point is the last position seen, not one read at input time.
+
+  const SCROLL_KEYS = new Set(['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' ']);
+  const MIN_SCROLL_PX = 20;
+  const USER_SCROLL_MS = 800;
+
+  const pageScroller = () => document.scrollingElement || document.documentElement;
+  const scrollTop = (el) => (el === pageScroller() ? window.scrollY : el.scrollTop);
+
+  function onScrollInput(e) {
+    if (!e.isTrusted) return;
+    const t = e.target;
+    if (e.type === 'keydown') {
+      // Keys in fields and on buttons do their own thing, not scrolling.
+      if (!SCROLL_KEYS.has(e.key) || isTextField(t) || (t instanceof Element && t.closest('button,input,select,textarea,[role=button],[role=listbox],[role=menu]'))) return;
+    } else if (e.type === 'pointerdown') {
+      // Only a press on a scrollbar; a click that makes the page scroll
+      // itself (an anchor link, say) replays that scroll by itself.
+      const onBar = (t instanceof Element && t.clientWidth > 0 && (e.offsetX > t.clientWidth || e.offsetY > t.clientHeight))
+        || e.clientX >= document.documentElement.clientWidth;
+      if (!onBar) return;
+    }
+    session.userScrollUntil = Date.now() + USER_SCROLL_MS;
+    // A scroll that landed just before this input event belongs to it.
+    const early = session.unclaimed;
+    session.unclaimed = null;
+    if (early && Date.now() - early.t < 150) claimScroll(early.el, early.from);
+  }
+
+  function claimScroll(el, from) {
+    let s = session.scrolls.get(el);
+    if (!s) {
+      s = { from, timer: 0 };
+      session.scrolls.set(el, s);
+    }
+    session.userScrollUntil = Date.now() + USER_SCROLL_MS; // momentum keeps scrolling
+    clearTimeout(s.timer);
+    s.timer = setTimeout(() => flushScroll(el), 600);
+  }
+
+  function onScroll(e) {
+    if (!e.isTrusted) return;
+    const el = e.target === document || e.target === document.documentElement || e.target === document.body ? pageScroller() : e.target;
+    if (!(el instanceof Element)) return;
+    // Sections are assumed to start at the top until seen scrolling.
+    const from = session.positions.get(el) ?? 0;
+    session.positions.set(el, scrollTop(el));
+    if (Date.now() <= session.userScrollUntil) claimScroll(el, from);
+    else if (!session.scrolls.has(el)) session.unclaimed = { el, from, t: Date.now() };
+  }
+
+  function flushScroll(el, { drop = false } = {}) {
+    const s = session.scrolls.get(el);
+    if (!s) return;
+    clearTimeout(s.timer);
+    session.scrolls.delete(el);
+    const amount = Math.round(scrollTop(el) - s.from);
+    if (drop || Math.abs(amount) < MIN_SCROLL_PX) return;
+    const page = el === pageScroller() || el === document.body;
+    send({ type: 'scroll', mode: 'by', selector: page ? '' : buildSelector(el), amount }, page ? null : el);
+  }
+
+  // Keep the order of actions: pending scrolls go before the next step.
+  function flushAllScrolls() {
+    for (const el of [...session.scrolls.keys()]) flushScroll(el);
+  }
+
   // ---- Clicks ----
 
   function scrollableListFor(item) {
@@ -161,6 +235,8 @@
     const text = textOf(el);
     const list = text && text.length <= 80 && (el.matches(LIST_ITEMS) || el.closest(LIST_ITEMS)) ? scrollableListFor(el) : null;
     if (list && list.matches(`${LIST_CONTAINERS},[class*=list],[class*=menu],[class*=dropdown]`)) {
+      // The "find in list" step scrolls the list itself.
+      flushScroll(list, { drop: true });
       return { type: 'select', selector: buildSelector(list), match: text, matchMode: 'exact' };
     }
     // The visible text is a backup way to find the element if the site
@@ -173,6 +249,7 @@
   // pointerdown so it can still be recorded if no click follows.
   function onPointerDown(e) {
     if (!e.isTrusted || e.button !== 0) return;
+    onScrollInput(e); // may be a scrollbar drag
     const el = clickTarget(e);
     session.pressed = null;
     if (!el) return;
@@ -255,12 +332,18 @@
     ['pointerdown', onPointerDown], ['pointerup', onPointerUp], ['click', onClick], ['input', onInput],
     ['contextmenu', onContextMenu], ['dblclick', onDblClick],
     ['change', onChange], ['keydown', onKeydown], ['focusout', onFocusOut],
+    ['scroll', onScroll], ['wheel', onScrollInput], ['touchstart', onScrollInput], ['keydown', onScrollInput],
   ];
+  const PASSIVE = new Set(['scroll', 'wheel', 'touchstart']);
 
   function start(id) {
     stop();
-    session = { id, typing: new Map(), lastClick: null, pressed: null, enterCandidate: null, ui: buildUi() };
-    for (const [t, fn] of DOC_LISTENERS) document.addEventListener(t, fn, true);
+    session = {
+      id, typing: new Map(), lastClick: null, pressed: null, enterCandidate: null, ui: buildUi(),
+      scrolls: new Map(), positions: new Map(), userScrollUntil: 0, unclaimed: null,
+    };
+    session.positions.set(pageScroller(), window.scrollY);
+    for (const [t, fn] of DOC_LISTENERS) document.addEventListener(t, fn, { capture: true, passive: PASSIVE.has(t) });
     window.addEventListener('keydown', onKeydownAfterPage);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
@@ -269,7 +352,7 @@
   function stop() {
     if (!session) return;
     flushAllTyping();
-    for (const [t, fn] of DOC_LISTENERS) document.removeEventListener(t, fn, true);
+    for (const [t, fn] of DOC_LISTENERS) document.removeEventListener(t, fn, { capture: true });
     window.removeEventListener('keydown', onKeydownAfterPage);
     window.removeEventListener('pagehide', onPageHide);
     window.removeEventListener('beforeunload', onPageHide);
