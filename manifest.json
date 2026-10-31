@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ClickFlow: Click & Type Automation",
   "short_name": "ClickFlow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Automate repetitive clicks and typing on web pages with step-by-step plans you build and run yourself.",
   "minimum_chrome_version": "116",
   "icons": {

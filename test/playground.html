@@ -28,6 +28,15 @@
     <button id="bump">Click me</button> Clicked <span id="counter">0</span> times
   </div>
 
+  <div class="card">
+    <div id="ctxTarget" style="display:inline-block;padding:10px 14px;border:1px dashed #9aa;border-radius:8px">Right-click or double-click me</div>
+    <span id="ctxOut"></span>
+    <p><button type="button" id="showLate">Show a slow button</button> <button type="button" id="lateBtn" hidden>Slow button</button> <span id="lateOut"></span></p>
+    <ul id="ctxMenu" hidden style="list-style:none;padding:6px;border:1px solid #cfd4e2;border-radius:8px;width:160px">
+      <li><button type="button" id="ctxRename">Rename</button></li>
+    </ul>
+  </div>
+
   <form class="card" id="form">
     <label for="name">Name</label>
     <input id="name" name="name" placeholder="Full name">
@@ -84,6 +93,32 @@
   btn.addEventListener('click', () => { list.hidden = !list.hidden; });
   list.addEventListener('scroll', () => {
     if (list.scrollTop + list.clientHeight >= list.scrollHeight - 5 && loaded < CITIES.length) setTimeout(loadMore, 200);
+  });
+
+  // A custom context menu and a double-click handler.
+  const ctx = document.getElementById('ctxTarget');
+  const ctxLog = (msg) => {
+    const out = document.getElementById('ctxOut');
+    out.textContent += (out.textContent ? ', ' : '') + msg;
+  };
+  ctx.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    document.getElementById('ctxMenu').hidden = false;
+  });
+  ctx.addEventListener('dblclick', () => ctxLog('double-clicked'));
+  document.getElementById('ctxRename').addEventListener('click', () => {
+    ctxLog('renamed');
+    document.getElementById('ctxMenu').hidden = true;
+  });
+
+  // Appears 1.2 s after asking, slower than a short step timeout.
+  document.getElementById('showLate').addEventListener('click', () => {
+    document.getElementById('lateBtn').hidden = true;
+    setTimeout(() => { document.getElementById('lateBtn').hidden = false; }, 1200);
+  });
+  document.getElementById('lateBtn').addEventListener('click', () => {
+    const out = document.getElementById('lateOut');
+    out.textContent = String(Number(out.textContent || 0) + 1);
   });
 
   let count = 0;

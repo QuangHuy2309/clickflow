@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  splitValues, applyTemplate, templateBlock, planRuns, dataRef, usedDatasets,
+  splitValues, applyTemplate, templateBlock, planRuns, runCount, dataRef, usedDatasets,
   unknownPlaceholders, renameReferences, nameFromSelector,
 } from '../src/shared/data.js';
 import {
@@ -40,8 +40,22 @@ test('templateBlock only touches text fields and does not mutate', () => {
   assert.equal(b.match, '{{city}}');
 });
 
+test('runCount: automatic mode uses the shortest data set the steps use', () => {
+  const p = planWith([['names', 'alice\nbob\ncarol'], ['emails', 'a@x\nb@x'], ['unused', 'x']],
+    [typeStep('{{names}}'), typeStep('{{emails}}')]);
+  assert.equal(p.runsMode, 'auto', 'new plans count runs automatically');
+  assert.deepEqual(runCount(p), { runs: 2, shortest: { name: 'emails', n: 2 } });
+  assert.deepEqual(planRuns(p), [{ names: 'alice', emails: 'a@x', unused: 'x' }, { names: 'bob', emails: 'b@x', unused: 'x' }]);
+  const one = planWith([['names', 'a, b, c, d']], [typeStep('{{names}}')]);
+  assert.equal(runCount(one).runs, 4, 'a single data set: one run per value');
+  assert.equal(runCount(planWith([], [typeStep('hi')])).runs, 1, 'no data sets used: one run');
+  const disabled = planWith([['names', 'a\nb\nc'], ['short', 'x']], [typeStep('{{names}}'), { ...typeStep('{{short}}'), enabled: false }]);
+  assert.equal(runCount(disabled).runs, 3, 'disabled steps do not count');
+  assert.equal(runCount({ ...p, runsMode: 'fixed', runs: 7 }).runs, 7, 'fixed mode uses the number');
+});
+
 test('planRuns gives each data set its own list, per run', () => {
-  const p = planWith([['names', 'alice\nbob\ncarol'], ['emails', 'a@x\nb@x']], [typeStep('{{names}}'), typeStep('{{emails}}')], { runs: 4 });
+  const p = planWith([['names', 'alice\nbob\ncarol'], ['emails', 'a@x\nb@x']], [typeStep('{{names}}'), typeStep('{{emails}}')], { runs: 4, runsMode: 'fixed' });
   assert.deepEqual(planRuns(p), [
     { names: 'alice', emails: 'a@x' },
     { names: 'bob', emails: 'b@x' },
@@ -50,9 +64,9 @@ test('planRuns gives each data set its own list, per run', () => {
   ], 'cycle starts each short list over');
   assert.deepEqual(planRuns({ ...p, whenShort: 'empty' }).map((r) => r.emails), ['a@x', 'b@x', '', '']);
   assert.equal(planRuns({ ...p, whenShort: 'stop' }).length, 2, 'stop ends at the shortest used set');
-  const unusedShort = planWith([['names', 'a\nb\nc'], ['unused', 'x']], [typeStep('{{names}}')], { runs: 3, whenShort: 'stop' });
+  const unusedShort = planWith([['names', 'a\nb\nc'], ['unused', 'x']], [typeStep('{{names}}')], { runs: 3, runsMode: 'fixed', whenShort: 'stop' });
   assert.equal(planRuns(unusedShort).length, 3, 'unused sets do not shorten the job');
-  assert.equal(planRuns({ ...newPlan(), runs: 3 }).length, 3, 'runs without any data');
+  assert.equal(planRuns({ ...newPlan(), runs: 3, runsMode: 'fixed' }).length, 3, 'fixed runs without any data');
 });
 
 test('dataRef, usedDatasets, unknownPlaceholders, renameReferences', () => {

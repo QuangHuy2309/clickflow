@@ -31,6 +31,12 @@ Drag steps to reorder them, duplicate or disable them, and delete what you don't
 A DIFFERENT VALUE ON EVERY RUN
 Create data sets, each its own list of values, and choose which one each text box uses from a dropdown. Set how many times to run (3, 5, 10…), and on every run each field takes the next value from its list.
 
+MORE THAN CLICKS
+• Right-click (custom context menus) and double-click
+• Screenshot steps that capture the page or a single element, ready to download
+• A live activity log showing each step, its values, and its timing
+• Automatic retries and a text-based backup when a site changes its layout
+
 POINT AND CLICK, NO CODE NEEDED
 Click "Pick" and then click any element on the page. ClickFlow works out a reliable selector for you.
 

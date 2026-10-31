@@ -26,7 +26,19 @@ const timeout = (extra = {}) => number('timeout', 'Wait for element up to (ms)',
 export const BLOCK_TYPES = {
   click: {
     label: 'Click',
-    fields: [selector('selector', 'Element', { required: true }), timeout()],
+    fields: [
+      selector('selector', 'Element', { required: true }),
+      choice('button', 'Mouse button', [
+        { value: 'left', label: 'Left click' },
+        { value: 'right', label: 'Right click' },
+        { value: 'double', label: 'Double click' },
+      ], 'left'),
+      text('fallbackText', 'If not found, click the element with this text', '', {
+        maxLen: 200,
+        hint: 'A backup for sites that change their element names. Filled in automatically when you record.',
+      }),
+      timeout(),
+    ],
   },
   type: {
     label: 'Type text',
@@ -81,10 +93,20 @@ export const BLOCK_TYPES = {
       timeout({ show: (b) => Boolean(b.selector) }),
     ],
   },
+  screenshot: {
+    label: 'Screenshot',
+    fields: [
+      selector('selector', 'Element (optional)', { hint: 'Leave empty to capture the visible page' }),
+      text('name', 'File name', 'screenshot-{{index}}', { hint: '{{index}} = run number; data sets work too' }),
+      timeout({ show: (b) => Boolean(b.selector) }),
+    ],
+  },
 };
 
 export const PLAN_FIELDS = {
   onError: ['stop', 'skip'],
+  // "auto": one run per value of the shortest data set the steps use.
+  runsMode: ['auto', 'fixed'],
   // What a data set gives once a run number is past its last value.
   whenShort: ['cycle', 'empty', 'stop'],
   split: ['auto', 'lines', 'comma'],
@@ -127,10 +149,12 @@ export function newPlan(name = 'Untitled plan') {
     name,
     blocks: [],
     datasets: [],
+    runsMode: 'auto',
     runs: 1,
     whenShort: 'cycle',
-    stepDelay: 300,
-    runDelay: 1000,
+    stepDelay: 100,
+    runDelay: 300,
+    retries: 1,
     onError: 'stop',
   };
 }
@@ -271,10 +295,12 @@ export function sanitizePlan(raw, { fresh = false } = {}) {
     name: cleanString(raw.name, LIMITS.name).trim() || base.name,
     blocks,
     datasets,
+    runsMode: cleanEnum(raw.runsMode, PLAN_FIELDS.runsMode, base.runsMode),
     runs: cleanNumber(raw.runs ?? legacyRuns, 1, LIMITS.runs, base.runs),
     whenShort: cleanEnum(raw.whenShort, PLAN_FIELDS.whenShort, base.whenShort),
     stepDelay: cleanNumber(raw.stepDelay, 0, 60000, base.stepDelay),
     runDelay: cleanNumber(raw.runDelay, 0, 600000, base.runDelay),
+    retries: cleanNumber(raw.retries, 0, 3, base.retries),
     onError: cleanEnum(raw.onError, PLAN_FIELDS.onError, base.onError),
   };
   return { plan, dropped };

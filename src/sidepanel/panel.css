@@ -696,6 +696,73 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 .site-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; }
 .run-buttons { display: flex; gap: 6px; }
 
+.runs-info {
+  margin: 0 0 4px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+}
+.runs-info strong { color: var(--accent); }
+#fixedRuns .field:first-child { margin-top: 4px; }
+
+/* ---------- Activity log ---------- */
+
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 40vh;
+  min-height: 120px;
+  margin: 0 12px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: pop .15s ease-out;
+}
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.log-summary { flex: 1; min-width: 0; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-head .icon-btn { width: 24px; height: 24px; }
+.log-list {
+  flex: 1;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.log-list:empty::before { content: "Steps appear here while a plan runs."; display: block; padding: 14px; color: var(--muted); text-align: center; }
+.log-item { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: start; padding: 5px 12px; }
+.log-item + .log-item { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.log-item .icon { margin-top: 1px; }
+.log-item.ok .icon { color: var(--ok); }
+.log-item.err { background: var(--danger-soft); }
+.log-item.err .icon, .log-item.err .log-err { color: var(--danger); }
+.log-item.shot .icon { color: var(--accent); }
+.log-where { color: var(--muted); font-size: 10.5px; font-weight: 650; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.log-text { min-width: 0; overflow-wrap: anywhere; }
+.log-err { display: block; margin-top: 2px; font-size: 11.5px; }
+.log-ms { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-sep { padding: 6px 12px; color: var(--muted); font-size: 11px; font-weight: 650; background: var(--surface-2); }
+.log-shot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.log-shot img { max-width: 120px; max-height: 70px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); cursor: zoom-in; }
+.log-item.retry { background: var(--warn-soft); }
+.log-item.retry .icon, .log-item.retry .log-err { color: var(--warn-ink); }
+.find-btn { padding: 0 8px; }
+.toast.has-action { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
+.toast-action { border: 0; background: none; color: inherit; font-weight: 750; text-decoration: underline; padding: 0; }
+.log-toggle[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.shot-view { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto 12px; border-radius: 8px; border: 1px solid var(--border); }
+
 /* ---------- Toasts & modal ---------- */
 
 .toasts { position: fixed; left: 12px; right: 12px; bottom: 76px; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; z-index: 30; }

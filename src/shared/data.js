@@ -61,16 +61,24 @@ export function renameReferences(plan, from, to) {
   eachTextField(plan, (b, f) => { b[f.key] = b[f.key].replace(re, `{{${to}}}`); });
 }
 
-// The values each run gets, as { setName: value } objects. A set with fewer
-// values than runs either starts over ("cycle"), gives "" ("empty"), or ends
-// the whole job early ("stop", counting only sets the steps actually use).
+// How many runs a plan does. "auto": one per value of the shortest data set
+// the enabled steps use (1 if they use none). "fixed": plan.runs.
+export function runCount(plan) {
+  const used = usedDatasets(plan, { enabledOnly: true });
+  const lengths = plan.datasets.filter((d) => used.has(d.name)).map((d) => ({ name: d.name, n: datasetValues(d).length }));
+  const shortest = lengths.reduce((min, x) => (!min || x.n < min.n ? x : min), null);
+  if (plan.runsMode === 'auto') return { runs: Math.min(shortest ? shortest.n : 1, LIMITS.runs), shortest };
+  return { runs: Math.min(plan.runs, LIMITS.runs), shortest };
+}
+
+// The values each run gets, as { setName: value } objects. With a fixed run
+// count, a set with fewer values than runs either starts over ("cycle"),
+// gives "" ("empty"), or ends the whole job early ("stop", counting only sets
+// the steps actually use).
 export function planRuns(plan) {
   const sets = plan.datasets.map((d) => ({ name: d.name, values: datasetValues(d) }));
-  let runs = Math.min(plan.runs, LIMITS.runs);
-  if (plan.whenShort === 'stop') {
-    const used = usedDatasets(plan, { enabledOnly: true });
-    for (const s of sets) if (used.has(s.name)) runs = Math.min(runs, s.values.length);
-  }
+  let { runs, shortest } = runCount(plan);
+  if (plan.runsMode !== 'auto' && plan.whenShort === 'stop' && shortest) runs = Math.min(runs, shortest.n);
   return Array.from({ length: runs }, (_, i) => Object.fromEntries(sets.map((s) => {
     if (!s.values.length) return [s.name, ''];
     if (i < s.values.length) return [s.name, s.values[i]];

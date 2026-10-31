@@ -15,7 +15,7 @@ When the user presses Record, Run, or Pick, ClickFlow injects its own bundled sc
 Gives ClickFlow temporary access to the current tab when the user clicks the toolbar icon, so it can identify the page and ask for site access.
 
 **Host permissions (optional_host_permissions: <all_urls>)**
-These are optional and never granted at install. The extension calls chrome.permissions.request for a single site (for example https://example.com/*) only when the user chooses to record, run a plan, or pick an element on that site. The user can automate any site they choose, so the specific sites can't be known in advance.
+These are optional and never granted at install. The extension calls chrome.permissions.request for a single site (for example https://example.com/*) only when the user chooses to record, run a plan, or pick an element on that site. The user can automate any site they choose, so the specific sites can't be known in advance. If a plan contains a Screenshot step, the extension instead requests <all_urls> once, at Run, because chrome.tabs.captureVisibleTab requires it. The images stay inside the extension and are only saved locally when the user clicks Download.
 
 ## Remote code
 No, I am not using remote code. All JavaScript is included in the package.

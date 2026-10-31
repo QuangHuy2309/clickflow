@@ -163,7 +163,9 @@
     if (list && list.matches(`${LIST_CONTAINERS},[class*=list],[class*=menu],[class*=dropdown]`)) {
       return { type: 'select', selector: buildSelector(list), match: text, matchMode: 'exact' };
     }
-    return { type: 'click', selector: buildSelector(el) };
+    // The visible text is a backup way to find the element if the site
+    // regenerates its ids/classes before the plan is replayed.
+    return { type: 'click', selector: buildSelector(el), fallbackText: text && text.length <= 60 ? text : '' };
   }
 
   // Some widgets (autocomplete suggestions, menus) act on mousedown and
@@ -216,6 +218,21 @@
     send(describeClick(el), el);
   }
 
+  function onContextMenu(e) {
+    if (!e.isTrusted || !(e.target instanceof Element)) return;
+    const el = e.target.closest(ACTIONABLE) || e.target;
+    flushAllTyping();
+    send({ type: 'click', selector: buildSelector(el), button: 'right' }, el);
+  }
+
+  // The browser also reports the two single clicks; the panel folds them
+  // into this one step.
+  function onDblClick(e) {
+    if (!e.isTrusted) return;
+    const el = clickTarget(e);
+    if (el) send({ type: 'click', selector: buildSelector(el), button: 'double' }, el);
+  }
+
   // The page is navigating away: send anything still pending before the
   // recorder is torn down (it's re-attached on the next page).
   function onPageHide() {
@@ -236,6 +253,7 @@
 
   const DOC_LISTENERS = [
     ['pointerdown', onPointerDown], ['pointerup', onPointerUp], ['click', onClick], ['input', onInput],
+    ['contextmenu', onContextMenu], ['dblclick', onDblClick],
     ['change', onChange], ['keydown', onKeydown], ['focusout', onFocusOut],
   ];
 

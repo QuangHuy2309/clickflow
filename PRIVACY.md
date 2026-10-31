@@ -16,7 +16,7 @@ That storage is not encrypted, so please don't put passwords or other sensitive 
 
 ## Website access
 
-ClickFlow asks for access to a website only when you choose to record, run, or pick elements on it. While you're recording, it notes which elements you click and what you type, and saves those as steps on your device. Password and payment fields are never recorded. It reads and changes a page only to carry out the steps you start yourself, and nothing is sent anywhere. You can remove site access at any time from `chrome://extensions`.
+ClickFlow asks for access to a website only when you choose to record, run, or pick elements on it. While you're recording, it notes which elements you click and what you type, and saves those as steps on your device. Password and payment fields are never recorded. Screenshot steps capture images of the page that stay in the extension's panel and are saved to your computer only when you choose Download. They are never uploaded. ClickFlow reads and changes a page only to carry out the steps you start yourself, and nothing is sent anywhere. You can remove site access at any time from `chrome://extensions`.
 
 ## Limited Use
 

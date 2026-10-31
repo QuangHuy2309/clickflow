@@ -22,7 +22,9 @@ rmSync(work, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 for (const p of ['manifest.json', 'src', 'icons']) cpSync(join(root, p), join(ext, p), { recursive: true });
 const manifest = JSON.parse(readFileSync(join(ext, 'manifest.json'), 'utf8'));
-manifest.host_permissions = ['http://127.0.0.1/*'];
+// Screenshot steps need all-sites access (Chrome's rule for captureVisibleTab);
+// pre-grant it here too, since the prompt can't be clicked headlessly.
+manifest.host_permissions = ['http://127.0.0.1/*', '<all_urls>'];
 writeFileSync(join(ext, 'manifest.json'), JSON.stringify(manifest));
 
 // Serves only the known test pages (no path traversal).
@@ -53,6 +55,7 @@ async function waitUntil(page, fn, timeout = 10000) {
   }
 }
 
+const PERF_BUDGET_MS = Number(process.env.PERF_BUDGET_MS || 3000);
 const ok = (msg, ...rest) => console.log(`✓ ${msg}`, ...rest);
 let failed = false;
 
@@ -146,10 +149,10 @@ try {
   ok('recorded 7 steps from real page use:', summaries);
 
   // ---- Text box 1 and text box 2 each get their own data set via the Value dropdown.
-  await cards.nth(1).locator('.block-title').click();
+  await cards.nth(1).locator('.block-title strong').click();
   assert.equal(await cards.nth(1).locator('.source-select').inputValue(), '__fixed__');
   await cards.nth(1).locator('.source-select').selectOption('__new__');
-  await cards.nth(2).locator('.block-title').click();
+  await cards.nth(2).locator('.block-title strong').click();
   await cards.nth(2).locator('.source-select').selectOption('__new__');
   assert.equal(await cards.nth(1).locator('.source-select').inputValue(), 'name');
   assert.equal(await cards.nth(2).locator('.source-select').inputValue(), 'email');
@@ -184,24 +187,29 @@ try {
   await panel.screenshot({ path: join(out, 'panel-data.png') });
   ok('data sets: separate lists, add / rename / delete');
 
-  // ---- Settings: number of runs.
+  // ---- Settings: automatic run count = shortest data set; or a fixed number.
   await panel.click('#tab-settings');
-  assert.equal(await panel.textContent('#matchLongestBtn'), 'Match the longest data set (3 runs)');
+  assert.equal(await panel.getAttribute('#runsMode [data-value="auto"]', 'aria-checked'), 'true', 'automatic by default');
+  assert.equal((await panel.textContent('#runBtn')).trim(), 'Run 2×', 'auto: shortest set (email) has 2 values');
+  assert.match(await panel.textContent('#autoRunsInfo'), /2 runs.*shortest of your 2 data sets, email, has 2 values/);
+  assert.equal(await panel.isVisible('#fixedRuns'), false);
+  await panel.screenshot({ path: join(out, 'panel-settings-auto.png') });
+  await panel.click('#runsMode [data-value="fixed"]');
+  assert.equal(await panel.inputValue('#runs'), '2', 'fixed starts from the automatic count');
   await panel.click('#quickRuns button[data-runs="10"]');
   assert.equal(await panel.inputValue('#runs'), '10');
-  await panel.click('#matchLongestBtn');
-  assert.equal(await panel.inputValue('#runs'), '3');
+  await panel.click('#quickRuns button[data-runs="3"]');
   assert.equal((await panel.textContent('#runBtn')).trim(), 'Run 3×');
   await panel.fill('#stepDelay', '50');
   await panel.locator('#stepDelay').dispatchEvent('change');
   await panel.fill('#runDelay', '100');
   await panel.locator('#runDelay').dispatchEvent('change');
   await panel.screenshot({ path: join(out, 'panel-settings.png') });
-  ok('runs set from quick buttons and "match longest"');
+  ok('runs: automatic = shortest data set (2); fixed number via quick buttons');
   await panel.click('#tab-steps');
 
-  // ---- Run 3 times: each text box takes the next value from its own list;
-  // the shorter email list starts over.
+  // ---- Run 3 times (fixed): each text box takes the next value from its own
+  // list; the shorter email list starts over.
   await panel.click('#runBtn');
   await site.waitForFunction(() => document.querySelectorAll('#log li').length === 4, null, { timeout: 60000 });
   await waitUntil(panel, () => document.getElementById('runStatus').textContent.startsWith('Done'), 20000);
@@ -212,6 +220,12 @@ try {
     'name=carol email=a@x.com country=jp city=City 5',
   ]);
   ok('3 runs with two independent data sets:', log.slice(1));
+  // The activity log opened by itself and has one ✓ line per step (3 runs × 7 steps).
+  assert.equal(await panel.isVisible('#logPanel'), true);
+  assert.equal(await panel.locator('#logList .log-item.ok').count(), 21);
+  assert.match(await panel.locator('#logList .log-item.ok').nth(1).textContent(), /R1·S2.*alice.*input\[name="name"\].*\d+ ms/);
+  assert.match(await panel.textContent('#logSummary'), /Finished · 3\/3 runs ok/);
+  ok('activity log: 21 step lines with timings');
   await panel.screenshot({ path: join(out, 'panel-done.png') });
   await site.screenshot({ path: join(out, 'playground-after.png') });
 
@@ -225,8 +239,10 @@ try {
   ok('move up/down');
 
   // ---- A missing element fails with a readable error on that step.
-  await cards.last().locator('.block-title').click();
+  await cards.last().locator('.block-title strong').click();
   await cards.last().locator('.input-group input').fill('#does-not-exist');
+  // Clear the recorded text backup ("Submit"), or the step would still succeed.
+  await cards.last().locator('.field', { hasText: 'If not found' }).locator('input').fill('');
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').fill('300');
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').dispatchEvent('change');
   await panel.click('#tab-settings');
@@ -333,13 +349,15 @@ try {
   await recorderReady();
   await stopRecording();
   assert.deepEqual(await titles(), ['Type text', 'Click']);
-  await cards.nth(0).locator('.block-title').click();
+  await cards.nth(0).locator('.block-title strong').click();
   assert.equal(await cards.nth(0).locator('.input-group input').first().inputValue(), 'textarea[name="q"]');
   assert.equal(await cards.nth(0).locator('textarea').inputValue(), 'cats');
   assert.equal(await cards.nth(0).locator('.check', { hasText: 'Press Enter' }).locator('input').isChecked(), true,
     'Enter in a textarea search box was recorded');
-  await cards.nth(1).locator('.block-title').click();
+  await cards.nth(1).locator('.block-title strong').click();
   assert.equal(await cards.nth(1).locator('.input-group input').first().inputValue(), 'a[href="article.html?title=cats-1"]');
+  assert.equal(await cards.nth(1).locator('.field', { hasText: 'If not found' }).locator('input').inputValue(), 'cats — result 1',
+    'recorded the link text as a backup');
   ok('recorded textarea + Enter across a page navigation, and the result click');
 
   // ---- Replay it: Enter must submit the form and the click must find the link.
@@ -354,10 +372,7 @@ try {
   await cards.nth(0).locator('.source-select').selectOption('__new__');
   await panel.click('#tab-data');
   await panel.locator('.dataset').last().locator('textarea').fill('dogs\nbirds');
-  await panel.click('#tab-settings');
-  await panel.click('#matchLongestBtn');
-  assert.equal(await panel.inputValue('#runs'), '2');
-  await panel.click('#tab-steps');
+  assert.equal((await panel.textContent('#runBtn')).trim(), 'Run 2×', 'automatic: one run per value');
   await openSite('search.html');
   await site.evaluate(() => localStorage.clear());
   assert.match(await runAndWait(), /^Done/);
@@ -394,6 +409,153 @@ try {
   assert.match(await runAndWait(), /^Done/);
   assert.equal(await site.textContent('#quickOut'), 'Searched: hello');
   ok('Enter reached a keyCode-checking handler on a field with no form');
+
+  // ---- Right-click (custom context menu) and double-click: record and replay.
+  await newPlanNamed('Mouse buttons');
+  await openSite('playground.html');
+  await panel.click('#emptyRecordBtn');
+  await recorderReady();
+  await site.click('#ctxTarget', { button: 'right' });
+  await site.click('#ctxRename');
+  await site.dblclick('#ctxTarget');
+  await site.waitForTimeout(200);
+  await stopRecording();
+  assert.equal(await site.textContent('#ctxOut'), 'renamed, double-clicked');
+  const mouseSteps = await panel.locator('#blockList .summary').allTextContents();
+  assert.deepEqual(mouseSteps, ['Right-click #ctxTarget', 'Click #ctxRename', 'Double-click #ctxTarget'],
+    'the two clicks of a double-click fold into one step');
+  await openSite('playground.html');
+  assert.match(await runAndWait(), /^Done/);
+  assert.equal(await site.textContent('#ctxOut'), 'renamed, double-clicked');
+  ok('recorded and replayed right-click (context menu) and double-click:', mouseSteps);
+
+  // ---- Screenshot steps: whole page and a single element.
+  await newPlanNamed('Screenshots');
+  await panel.click('#emptyAddBtn');
+  await panel.click('#addMenu button:has-text("Screenshot")');
+  await panel.click('#addBtn');
+  await panel.click('#addMenu button:has-text("Screenshot")');
+  await cards.nth(1).locator('.input-group input').first().fill('#bump');
+  await cards.nth(1).locator('.field', { hasText: 'File name' }).locator('input').fill('button-{{index}}');
+  await panel.click('#logClear');
+  await openSite('playground.html');
+  assert.match(await runAndWait(), /^Done/);
+  const shotItems = panel.locator('#logList .log-item.shot');
+  assert.equal(await shotItems.count(), 2);
+  assert.match(await shotItems.nth(0).textContent(), /screenshot-1\.png/);
+  assert.match(await shotItems.nth(1).textContent(), /button-1\.png/);
+  const sizes = await shotItems.locator('img').evaluateAll((imgs) => Promise.all(imgs.map((img) => img.decode().then(() => [img.naturalWidth, img.naturalHeight]))));
+  const btn = await site.locator('#bump').boundingBox();
+  // Headless windows capture at their real size, not the emulated viewport.
+  assert.ok(sizes[0][0] >= 300 && sizes[0][0] > sizes[1][0] * 3, `page capture is the whole visible tab (${sizes[0]})`);
+  assert.ok(Math.abs(sizes[1][0] - Math.round(btn.width)) <= 2 && Math.abs(sizes[1][1] - Math.round(btn.height)) <= 2,
+    `element capture is cropped to the button (${sizes[1]} vs ${btn.width}×${btn.height})`);
+  const download = panel.waitForEvent('download');
+  await shotItems.nth(1).locator('button:has-text("Download")').click();
+  assert.equal((await download).suggestedFilename(), 'button-1.png');
+  await panel.screenshot({ path: join(out, 'panel-log.png') });
+  ok('screenshots: page + element (cropped), shown in the log, downloadable:', sizes);
+
+
+  // ================= Robustness & debugging upgrades =================
+  const importPlan = async (planObj) => {
+    const file = join(work, `${planObj.name.replace(/\W+/g, '-')}.json`);
+    writeFileSync(file, JSON.stringify(planObj));
+    await panel.click('#planMenuBtn');
+    const chooser = panel.waitForEvent('filechooser');
+    await panel.click('[data-action="import"]');
+    await (await chooser).setFiles(file);
+    await panel.click('dialog button[type=submit]');
+    await panel.waitForSelector('#blockList > li.block');
+  };
+
+  // ---- Retry: the slow button appears after 1.2 s; the step only waits 0.8 s.
+  await importPlan({
+    name: 'Retry',
+    blocks: [
+      { type: 'click', selector: '#showLate' },
+      { type: 'click', selector: '#lateBtn', timeout: 800 },
+    ],
+    retries: 0, stepDelay: 0,
+  });
+  await openSite('playground.html');
+  assert.match(await runAndWait(), /^Finished: 0 ok, 1 failed/, 'without retries the slow button times out');
+  await panel.click('#tab-settings');
+  await panel.selectOption('#retries', '1');
+  await panel.click('#tab-steps');
+  await panel.click('#logClear');
+  await openSite('playground.html');
+  assert.match(await runAndWait(), /^Done/, 'one retry (waiting 1.6 s) finds it');
+  assert.equal(await site.textContent('#lateOut'), '1');
+  assert.equal(await panel.locator('#logList .log-item.retry').count(), 1, 'the retry is shown in the log');
+  ok('retry with a doubled timeout recovered a slow element');
+
+  // ---- Find-by-text backup when the selector no longer matches.
+  await importPlan({
+    name: 'Text backup',
+    blocks: [{ type: 'click', selector: 'div.old-layout > a.Xy12ab', fallbackText: 'cats — result 2', timeout: 1000 }],
+    retries: 0,
+  });
+  await openSite('results.html?q=cats');
+  assert.match(await runAndWait(), /^Done/);
+  await site.waitForURL(/article\.html\?title=cats-2/);
+  ok('a stale selector fell back to the element with the recorded text');
+
+  // ---- Test a single step, and Find what a selector matches.
+  await importPlan({
+    name: 'Debug tools',
+    blocks: [
+      { type: 'click', selector: '#bump' },
+      { type: 'click', selector: '#doesNotExist', timeout: 500 },
+    ],
+  });
+  await openSite('playground.html');
+  const countBefore2 = Number(await site.textContent('#counter'));
+  await cards.nth(0).hover();
+  await cards.nth(0).locator('[aria-label="Test this step"]').click();
+  await waitUntil(panel, () => /^Done/.test(document.getElementById('runStatus').textContent), 10000);
+  assert.equal(Number(await site.textContent('#counter')), countBefore2 + 1, 'only that step ran, once');
+  assert.match(await panel.locator('#logList .log-sep').last().textContent(), /Finished · 1\/1/);
+  assert.match(await panel.locator('#logList .log-sep').nth(-2).textContent(), /Testing step 1 · Click/);
+  await panel.evaluate(() => document.getElementById('toasts').replaceChildren());
+  await cards.nth(0).locator('.find-btn').click(); // imported steps start expanded
+  await panel.waitForSelector('.toast');
+  assert.equal(await panel.textContent('.toast'), '1 match.');
+  ok('▶ Test this step ran one step; Find reported the match count');
+
+  // ---- Undo a deleted step.
+  await cards.nth(1).hover();
+  await cards.nth(1).locator('.icon-btn.danger').click();
+  await cards.nth(1).locator('.icon-btn.danger').click();
+  assert.equal(await cards.count(), 1);
+  await panel.click('.toast-action:has-text("Undo")');
+  assert.equal(await cards.count(), 2);
+  assert.match(await cards.nth(1).locator('.summary').textContent(), /#doesNotExist/);
+  ok('Undo restored a deleted step in place');
+
+  // ---- Speed: 10 clicks × 3 runs with no configured delays must be quick.
+  {
+    const perfFile = join(work, 'perf.json');
+    writeFileSync(perfFile, JSON.stringify({
+      name: 'Perf',
+      blocks: Array.from({ length: 10 }, () => ({ type: 'click', selector: '#bump', timeout: 2000 })),
+      runs: 3, runsMode: 'fixed', stepDelay: 0, runDelay: 0,
+    }));
+    await panel.click('#planMenuBtn');
+    const perfChooser = panel.waitForEvent('filechooser');
+    await panel.click('[data-action="import"]');
+    await (await perfChooser).setFiles(perfFile);
+    await panel.click('dialog button[type=submit]');
+    await openSite('playground.html');
+    const before = Number(await site.textContent('#counter'));
+    const t0 = Date.now();
+    assert.match(await runAndWait(), /^Done/);
+    const elapsed = Date.now() - t0;
+    assert.equal(Number(await site.textContent('#counter')) - before, 30, 'all 30 clicks happened');
+    console.log(`  ⏱ 30 click steps took ${elapsed} ms (${Math.round(elapsed / 30)} ms/step)`);
+    assert.ok(elapsed < PERF_BUDGET_MS, `30 steps should take < ${PERF_BUDGET_MS} ms, took ${elapsed} ms`);
+    ok('speed budget met');
+  }
 
   // ---- Restricted pages are refused. Without the "tabs" permission Chrome
   // hides chrome:// URLs, so the panel reports "restricted" or "can't see".

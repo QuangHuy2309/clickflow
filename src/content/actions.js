@@ -26,20 +26,76 @@
     if (aborted) throw new StepError('Stopped.');
   }
 
-  async function waitFor(selector, timeout, { visible = false, gone = false } = {}) {
-    const end = Date.now() + timeout;
-    for (;;) {
-      checkAbort();
-      const el = query(selector);
-      const present = el && (!visible || isVisible(el));
-      if (gone ? !present : present) return el;
-      if (Date.now() >= end) {
-        throw new StepError(gone
-          ? `"${selector}" was still on the page after ${timeout} ms.`
-          : `Couldn't find "${selector}" within ${timeout} ms.`);
-      }
-      await sleep(100);
+  const CLICKABLE = 'a,button,summary,label,li,[role=button],[role=link],[role=option],[role=menuitem],[role=tab],input[type=submit],input[type=button]';
+
+  // Backup for Click steps whose selector no longer matches (sites that
+  // regenerate ids/classes): the visible clickable element with this text.
+  function findByText(text) {
+    const target = norm(text);
+    if (!target) return null;
+    for (const el of document.querySelectorAll(CLICKABLE)) {
+      if (norm(el.textContent || el.value) === target && isVisible(el)) return el;
     }
+    return null;
+  }
+
+  // Resolves as soon as the element shows up (MutationObserver), with a slow
+  // poll as a safety net for visibility changes that aren't DOM mutations.
+  function waitFor(selector, timeout, { visible = false, gone = false, fallbackText = '' } = {}) {
+    const check = () => {
+      checkAbort();
+      const el = query(selector) || (!gone && fallbackText ? findByText(fallbackText) : null);
+      const present = Boolean(el) && (!visible || isVisible(el));
+      if (gone) return present ? null : true;
+      return present ? el : null;
+    };
+    const first = check();
+    if (first) return Promise.resolve(first);
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const finish = (fn, value) => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        clearInterval(poll);
+        clearTimeout(timer);
+        fn(value);
+      };
+      const retry = () => {
+        try {
+          const found = check();
+          if (found) finish(resolve, found);
+        } catch (e) {
+          finish(reject, e);
+        }
+      };
+      const observer = new MutationObserver(retry);
+      observer.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'],
+      });
+      const poll = setInterval(retry, 250);
+      const timer = setTimeout(() => {
+        let message;
+        if (gone) message = `"${selector}" was still on the page after ${timeout} ms.`;
+        else if (visible && query(selector)) message = `"${selector}" is on the page but stayed hidden for ${timeout} ms.`;
+        else message = `Couldn't find "${selector}"${fallbackText ? ` or an element with the text “${fallbackText}”` : ''} within ${timeout} ms.`;
+        finish(reject, new StepError(message));
+      }, timeout);
+    });
+  }
+
+  // For the panel's "Find" button: flash every match and count them.
+  function highlight(selector) {
+    let matches;
+    try {
+      matches = [...document.querySelectorAll(selector)];
+    } catch {
+      return { ok: false, error: `"${selector}" is not a valid CSS selector.` };
+    }
+    const visible = matches.filter(isVisible);
+    if (visible[0]) visible[0].scrollIntoView({ block: 'center' });
+    setTimeout(() => visible.slice(0, 20).forEach(flash), 60);
+    return { ok: true, count: matches.length, visible: visible.length };
   }
 
   // ---- On-page UI (closed shadow root so page CSS can't touch it) ----
@@ -54,7 +110,8 @@
       [hidden]{display:none!important}
       .badge{position:fixed;right:16px;bottom:16px;display:flex;align-items:center;gap:8px;padding:8px 14px;
         border-radius:999px;background:#1b1d29;color:#fff;font:600 12px/1.2 system-ui,sans-serif;
-        box-shadow:0 6px 24px rgba(0,0,0,.25)}
+        box-shadow:0 6px 24px rgba(0,0,0,.25);max-width:min(460px,calc(100vw - 32px))}
+      .badge span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .dot{width:8px;height:8px;border-radius:50%;background:#7c7cff;animation:p 1s infinite alternate}
       @keyframes p{to{opacity:.3}}
       .flash{position:fixed;border:2px solid #6366f1;border-radius:6px;background:rgba(99,102,241,.12);
@@ -69,7 +126,7 @@
     badge.append(dot, label);
     root.append(style, badge);
     document.documentElement.append(host);
-    ui = { host, root, badge };
+    ui = { host, root, badge, label };
     return ui;
   }
 
@@ -83,9 +140,15 @@
     setTimeout(() => box.remove(), 800);
   }
 
-  function setBadge(on) {
-    if (on) getUi().badge.hidden = false;
-    else if (ui) ui.badge.hidden = true;
+  // `text` names the current step, e.g. "Run 1/3 · Step 2/5 · Type text".
+  function setBadge(on, text) {
+    if (on) {
+      const u = getUi();
+      u.badge.hidden = false;
+      u.label.textContent = text ? `ClickFlow · ${text} · Esc to stop` : 'ClickFlow is running · press Esc to stop';
+    } else if (ui) {
+      ui.badge.hidden = true;
+    }
   }
 
   window.addEventListener('keydown', (e) => {
@@ -97,21 +160,52 @@
 
   // ---- Primitive actions ----
 
-  function clickElement(el) {
+  // button: "left" (default), "right" (fires contextmenu, as pages with
+  // custom context menus expect), or "double" (two clicks, then dblclick).
+  function clickElement(el, button = 'left') {
     if (el.disabled) throw new StepError('That element is disabled.');
     el.scrollIntoView({ block: 'center', inline: 'center' });
     flash(el);
     const r = el.getBoundingClientRect();
-    const init = {
-      bubbles: true, cancelable: true, composed: true, view: window, button: 0,
+    const right = button === 'right';
+    const base = {
+      bubbles: true, cancelable: true, composed: true, view: window,
+      button: right ? 2 : 0,
       clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
     };
-    el.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse', isPrimary: true }));
-    el.dispatchEvent(new MouseEvent('mousedown', init));
-    if (typeof el.focus === 'function') el.focus({ preventScroll: true });
-    el.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse', isPrimary: true }));
-    el.dispatchEvent(new MouseEvent('mouseup', init));
+    const press = (detail) => {
+      const init = { ...base, detail };
+      el.dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: right ? 2 : 1, pointerType: 'mouse', isPrimary: true }));
+      el.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: right ? 2 : 1 }));
+      if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+      el.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse', isPrimary: true }));
+      el.dispatchEvent(new MouseEvent('mouseup', init));
+    };
+    if (right) {
+      press(1);
+      el.dispatchEvent(new MouseEvent('contextmenu', { ...base, detail: 1, buttons: 0 }));
+      return;
+    }
+    press(1);
     el.click();
+    if (button === 'double') {
+      press(2);
+      el.dispatchEvent(new MouseEvent('click', { ...base, detail: 2 }));
+      el.dispatchEvent(new MouseEvent('dblclick', { ...base, detail: 2 }));
+    }
+  }
+
+  // For element screenshots: scroll it into view and report its box.
+  async function measure(b) {
+    try {
+      const el = await waitFor(b.selector, b.timeout);
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      await sleep(120);
+      const r = el.getBoundingClientRect();
+      return { ok: true, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, dpr: window.devicePixelRatio };
+    } catch (e) {
+      return { ok: false, error: e instanceof StepError ? e.message : `Unexpected error: ${e.message}` };
+    }
   }
 
   function setNativeValue(el, value) {
@@ -220,16 +314,17 @@
     await sleep(300);
   }
 
-  async function run(b) {
+  async function run(b, label) {
     aborted = false;
-    setBadge(true);
+    setBadge(true, label);
     try {
       switch (b.type) {
         case 'click':
-          clickElement(await waitFor(b.selector, b.timeout));
+          // Like a person, wait until the element is actually visible.
+          clickElement(await waitFor(b.selector, b.timeout, { visible: true, fallbackText: b.fallbackText }), b.button);
           break;
         case 'type':
-          typeInto(await waitFor(b.selector, b.timeout), b.text, b.clear);
+          typeInto(await waitFor(b.selector, b.timeout, { visible: true }), b.text, b.clear);
           break;
         case 'select':
           await selectValue(b);
@@ -251,6 +346,8 @@
 
   window.__clickflow = {
     run,
+    measure,
+    highlight,
     abort() { aborted = true; },
     setBadge,
   };

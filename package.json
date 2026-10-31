@@ -1,6 +1,6 @@
 {
   "name": "clickflow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Dev tooling for the ClickFlow Chrome extension (the extension itself has no dependencies).",
   "type": "module",

@@ -80,26 +80,32 @@
     <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
       <div class="card">
         <div class="section-head"><h2>Runs</h2><span id="runSummary" class="pill pill-accent"></span></div>
-        <div class="field">
-          <label for="runs">Number of runs</label>
-          <div class="runs-row">
-            <input id="runs" type="number" min="1" max="10000">
-            <div class="quick-runs" id="quickRuns" role="group" aria-label="Quick run counts">
-              <button type="button" data-runs="1">1</button>
-              <button type="button" data-runs="3">3</button>
-              <button type="button" data-runs="5">5</button>
-              <button type="button" data-runs="10">10</button>
+        <div class="segmented" id="runsMode" role="radiogroup" aria-label="How many runs">
+          <button type="button" role="radio" data-value="auto">Automatic</button>
+          <button type="button" role="radio" data-value="fixed">Fixed number</button>
+        </div>
+        <p id="autoRunsInfo" class="runs-info"></p>
+        <div id="fixedRuns">
+          <div class="field">
+            <label for="runs">Number of runs</label>
+            <div class="runs-row">
+              <input id="runs" type="number" min="1" max="10000">
+              <div class="quick-runs" id="quickRuns" role="group" aria-label="Quick run counts">
+                <button type="button" data-runs="1">1</button>
+                <button type="button" data-runs="3">3</button>
+                <button type="button" data-runs="5">5</button>
+                <button type="button" data-runs="10">10</button>
+              </div>
             </div>
           </div>
-          <button type="button" id="matchLongestBtn" class="link-btn align-left"></button>
-        </div>
-        <div class="field">
-          <label for="whenShort">When a data set has fewer values than runs</label>
-          <select id="whenShort">
-            <option value="cycle">Start again from its first value</option>
-            <option value="empty">Leave the field empty</option>
-            <option value="stop">Stop when the shortest set runs out</option>
-          </select>
+          <div class="field">
+            <label for="whenShort">When a data set has fewer values than runs</label>
+            <select id="whenShort">
+              <option value="cycle">Start again from its first value</option>
+              <option value="empty">Leave the field empty</option>
+              <option value="stop">Stop when the shortest set runs out</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -114,17 +120,38 @@
             <label for="runDelay">Delay between runs (ms)</label>
             <input id="runDelay" type="number" min="0" max="600000" step="100">
           </div>
-          <div class="field span-2">
-            <label for="onError">If a step fails</label>
+          <div class="field">
+            <label for="retries">Retry a failed step</label>
+            <select id="retries" aria-describedby="retriesHint">
+              <option value="0">Don't retry</option>
+              <option value="1">Once</option>
+              <option value="2">Twice</option>
+              <option value="3">3 times</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="onError">If a step still fails</label>
             <select id="onError">
               <option value="stop">Stop everything</option>
               <option value="skip">Skip to the next run</option>
             </select>
           </div>
+          <small id="retriesHint" class="muted span-2">Each retry waits twice as long for the element as the last try.</small>
         </div>
       </div>
     </section>
   </main>
+
+  <section id="logPanel" class="log-panel" hidden aria-label="Activity log">
+    <div class="log-head">
+      <strong>Activity</strong>
+      <span id="logSummary" class="log-summary"></span>
+      <button id="logDownloadAll" class="link-btn" hidden>Download all images</button>
+      <button id="logClear" class="icon-btn" title="Clear the log" aria-label="Clear the log"></button>
+      <button id="logClose" class="icon-btn" title="Hide the log" aria-label="Hide the log"></button>
+    </div>
+    <ol id="logList" class="log-list"></ol>
+  </section>
 
   <footer class="dock">
     <div class="progress" aria-hidden="true"><div id="progressFill"></div></div>
@@ -134,6 +161,7 @@
         <span id="siteChip" class="site-chip" hidden></span>
       </div>
       <div class="run-buttons">
+        <button id="logBtn" class="icon-btn log-toggle" title="Activity log" aria-label="Activity log" aria-pressed="false"></button>
         <button id="pauseBtn" class="btn btn-ghost" hidden></button>
         <button id="stopBtn" class="btn btn-danger" hidden></button>
         <button id="recordBtn" class="btn btn-record"></button>

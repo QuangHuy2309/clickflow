@@ -6,7 +6,10 @@ export const BLOCK_UI = {
   select: { icon: 'select', desc: 'Pick a dropdown option or scroll a list to find it' },
   wait: { icon: 'wait', desc: 'Pause for a while or until something appears' },
   scroll: { icon: 'scroll', desc: 'Scroll the page or an element' },
+  screenshot: { icon: 'camera', desc: 'Capture the page or one element as an image' },
 };
+
+const CLICK_VERB = { left: 'Click', right: 'Right-click', double: 'Double-click' };
 
 const short = (s, n = 28) => {
   const t = String(s || '').replace(/\s+/g, ' ').trim();
@@ -25,7 +28,9 @@ export function summarize(b) {
   const sel = short(b.selector) || 'no element yet';
   switch (b.type) {
     case 'click':
-      return b.selector ? `Click ${sel}` : 'Choose an element to click';
+      return b.selector ? `${CLICK_VERB[b.button] || 'Click'} ${sel}` : 'Choose an element to click';
+    case 'screenshot':
+      return `${b.selector ? sel : 'Visible page'} → ${short(b.name, 22) || 'screenshot'}.png`;
     case 'type':
       return `${value(b.text, 20)} → ${sel}`;
     case 'select':

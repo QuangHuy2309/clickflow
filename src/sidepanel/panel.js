@@ -1,7 +1,7 @@
 import {
   BLOCK_TYPES, LIMITS, cleanDataName, isShown, newBlock, newDataset, newId, newPlan, sanitizeBlock, uniqueDataName,
 } from '../shared/schema.js';
-import { dataRef, datasetValues, nameFromSelector, renameReferences, usedDatasets } from '../shared/data.js';
+import { dataRef, datasetValues, nameFromSelector, renameReferences, runCount, usedDatasets } from '../shared/data.js';
 import { BLOCK_UI, summarize } from './blocks.js';
 import { h, icon } from './dom.js';
 import { exportPlan, flushState, loadState, readImportFile, saveState } from './storage.js';
@@ -26,9 +26,10 @@ const busy = () => runner.busy || Boolean(state.rec);
 
 // ---------- Toasts & modal ----------
 
-function toast(message, kind = 'info', ms = 3200) {
+function toast(message, kind = 'info', ms = 3200, action = null) {
   const box = $('toasts');
-  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, message);
+  const el = h('div', { class: `toast ${kind}${action ? ' has-action' : ''}`, role: kind === 'error' ? 'alert' : 'status' }, message,
+    action && h('button', { class: 'toast-action', onclick: () => { el.remove(); action.run(); } }, action.label));
   box.append(el);
   while (box.childElementCount > 3) box.firstElementChild.remove();
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 250); }, ms);
@@ -268,6 +269,7 @@ function blockCard(b, index, total) {
     h('div', { class: 'block-actions' },
       h('button', { class: 'icon-btn', title: 'Move up', 'aria-label': 'Move up', disabled: index === 0, onclick: () => moveBy(b.id, -1) }, icon('up', 15)),
       h('button', { class: 'icon-btn', title: 'Move down', 'aria-label': 'Move down', disabled: index === total - 1, onclick: () => moveBy(b.id, 1) }, icon('down', 15)),
+      h('button', { class: 'icon-btn', title: 'Test this step on the page', 'aria-label': 'Test this step', onclick: () => startRun(b.id) }, icon('play', 14)),
       h('button', { class: 'icon-btn', title: 'Duplicate', 'aria-label': 'Duplicate step', onclick: () => duplicateBlock(b.id) }, icon('copy', 15)),
       del));
 
@@ -329,7 +331,14 @@ function fieldControl(b, f, li) {
           class: `chip-btn pick-btn${picking ? ' active' : ''}`,
           title: 'Click an element on the page to fill this in',
           onclick: () => togglePick(b, f),
-        }, icon('target', 14), picking ? 'Picking…' : 'Pick'));
+        }, icon('target', 14), picking ? 'Picking…' : 'Pick'),
+        h('button', {
+          type: 'button',
+          class: 'chip-btn find-btn',
+          title: 'Highlight what this selector matches on the page',
+          'aria-label': 'Find on page',
+          onclick: () => findOnPage(b[f.key]),
+        }, icon('search', 14)));
       break;
     }
     case 'text':
@@ -449,7 +458,19 @@ function addBlock(type) {
 
 function removeBlock(id) {
   const p = plan();
-  p.blocks = p.blocks.filter((b) => b.id !== id);
+  const index = p.blocks.findIndex((b) => b.id === id);
+  const [removed] = p.blocks.splice(index, 1);
+  const planId = p.id;
+  toast('Step deleted.', 'info', 5000, {
+    label: 'Undo',
+    run: () => {
+      const target = state.plans.find((x) => x.id === planId);
+      if (!target || busy()) return;
+      target.blocks.splice(Math.min(index, target.blocks.length), 0, removed);
+      save();
+      if (state.currentId === planId) renderBlocks();
+    },
+  });
   delete state.run.errors[id];
   save();
   renderBlocks();
@@ -659,21 +680,25 @@ function bindData() {
 
 // ---------- Settings ----------
 
-function longestUsedSet(p) {
-  const used = usedDatasets(p);
-  const sets = p.datasets.filter((d) => used.has(d.name));
-  return Math.max(0, ...(sets.length ? sets : p.datasets).map((d) => datasetValues(d).length));
-}
-
 function updateRunCount() {
   const p = plan();
-  $('runCount').textContent = p.runs > 1 ? `${p.runs}×` : '';
-  $('runBtn').replaceChildren(icon('play', 13), p.runs > 1 ? `Run ${p.runs}×` : 'Run');
-  $('runSummary').textContent = `${p.runs} run${p.runs === 1 ? '' : 's'}`;
-  const longest = longestUsedSet(p);
-  $('matchLongestBtn').hidden = !longest || longest === p.runs;
-  $('matchLongestBtn').textContent = `Match the longest data set (${longest} runs)`;
-  $('matchLongestBtn').dataset.runs = String(longest);
+  const { runs, shortest } = runCount(p);
+  $('runCount').textContent = runs > 1 ? `${runs}×` : '';
+  $('runBtn').replaceChildren(icon('play', 13), runs > 1 ? `Run ${runs}×` : 'Run');
+  $('runSummary').textContent = `${runs} run${runs === 1 ? '' : 's'}`;
+  for (const btn of $('runsMode').children) btn.setAttribute('aria-checked', String(btn.dataset.value === p.runsMode));
+  $('fixedRuns').hidden = p.runsMode === 'auto';
+  $('autoRunsInfo').hidden = p.runsMode !== 'auto';
+  const info = $('autoRunsInfo');
+  if (shortest) {
+    const sets = usedDatasets(p, { enabledOnly: true }).size;
+    info.replaceChildren(h('strong', {}, `${runs} run${runs === 1 ? '' : 's'}`),
+      sets > 1
+        ? ` · the shortest of your ${sets} data sets, ${shortest.name}, has ${shortest.n} value${shortest.n === 1 ? '' : 's'}.`
+        : ` · one for each value in ${shortest.name}.`);
+  } else {
+    info.replaceChildren(h('strong', {}, '1 run'), ' · no step uses a data set yet. Runs follow the shortest data set your steps use.');
+  }
   for (const btn of $('quickRuns').children) btn.setAttribute('aria-pressed', String(Number(btn.dataset.runs) === p.runs));
 }
 
@@ -692,6 +717,7 @@ function renderSettings() {
   $('stepDelay').value = p.stepDelay;
   $('runDelay').value = p.runDelay;
   $('onError').value = p.onError;
+  $('retries').value = String(p.retries);
   updateRunCount();
 }
 
@@ -706,14 +732,122 @@ function bindSettings() {
       save();
     });
   }
+  $('runsMode').addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.dataset.value;
+    if (!v) return;
+    const p = plan();
+    // Switching to fixed starts from the count automatic mode would use.
+    if (v === 'fixed' && p.runsMode === 'auto') p.runs = runCount(p).runs;
+    p.runsMode = v;
+    save();
+    renderSettings();
+  });
   $('runs').addEventListener('change', (e) => setRuns(Number(e.target.value)));
   $('quickRuns').addEventListener('click', (e) => {
     const n = e.target.closest('button')?.dataset.runs;
     if (n) setRuns(Number(n));
   });
-  $('matchLongestBtn').addEventListener('click', (e) => setRuns(Number(e.target.dataset.runs)));
   $('whenShort').addEventListener('change', (e) => { plan().whenShort = e.target.value; save(); });
   $('onError').addEventListener('change', (e) => { plan().onError = e.target.value; save(); });
+  $('retries').addEventListener('change', (e) => { plan().retries = Number(e.target.value); save(); });
+}
+
+// ---------- Activity log ----------
+
+const LOG_MAX = 500;
+const shots = [];
+
+const fileName = (name) => `${String(name).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(0, 120) || 'screenshot'}.png`;
+const where = (run, step) => h('span', { class: 'log-where' }, `R${run + 1}·S${step + 1}`);
+
+function logAppend(node) {
+  const list = $('logList');
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  list.append(node);
+  while (list.childElementCount > LOG_MAX) list.firstElementChild.remove();
+  if (atBottom) list.scrollTop = list.scrollHeight;
+}
+
+function logSeparator(text) {
+  logAppend(h('li', { class: 'log-sep' }, text));
+  $('logSummary').textContent = text;
+}
+
+function logRetry({ run, step, block, attempt, error }) {
+  logAppend(h('li', { class: 'log-item retry' },
+    icon('alert', 14),
+    h('span', { class: 'log-text' }, where(run, step), `Retrying (${attempt}) ${summarize(block)}`, h('span', { class: 'log-err' }, error)),
+    h('span', { class: 'log-ms' }, '')));
+}
+
+function logStep({ run, step, block, ok, error, ms }) {
+  if (block.type === 'screenshot' && ok) return; // logged with its image by logShot
+  logAppend(h('li', { class: `log-item ${ok ? 'ok' : 'err'}` },
+    icon(ok ? 'check' : 'alert', 14),
+    h('span', { class: 'log-text' }, where(run, step), summarize(block), !ok && h('span', { class: 'log-err' }, error)),
+    h('span', { class: 'log-ms' }, `${ms} ms`)));
+}
+
+function downloadShot(shot) {
+  const a = document.createElement('a');
+  a.href = shot.url;
+  a.download = fileName(shot.name);
+  a.click();
+}
+
+function viewShot(shot) {
+  const dlg = $('modal');
+  dlg.replaceChildren(h('form', { method: 'dialog' },
+    h('h3', {}, fileName(shot.name)),
+    h('img', { class: 'shot-view', src: shot.url, alt: `Screenshot ${shot.name}` }),
+    h('div', { class: 'modal-actions' },
+      h('button', { type: 'submit', class: 'btn btn-ghost' }, 'Close'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => downloadShot(shot) }, icon('download', 14), 'Download'))));
+  dlg.oncancel = null;
+  dlg.showModal();
+}
+
+function logShot({ run, step, name, blob }) {
+  const shot = { name, url: URL.createObjectURL(blob) };
+  shots.push(shot);
+  $('logDownloadAll').hidden = false;
+  $('logDownloadAll').textContent = `Download all images (${shots.length})`;
+  logAppend(h('li', { class: 'log-item shot' },
+    icon('camera', 14),
+    h('span', { class: 'log-text' }, where(run, step), `Screenshot ${fileName(name)}`,
+      h('span', { class: 'log-shot' },
+        h('img', { src: shot.url, alt: `Screenshot ${name}`, title: 'View', onclick: () => viewShot(shot) }),
+        h('button', { class: 'btn btn-ghost btn-small', onclick: () => downloadShot(shot) }, icon('download', 13), 'Download'))),
+    h('span', { class: 'log-ms' }, `${Math.round(blob.size / 1024)} KB`)));
+}
+
+function showLog(open) {
+  $('logPanel').hidden = !open;
+  $('logBtn').setAttribute('aria-pressed', String(open));
+}
+
+function clearLog() {
+  for (const s of shots) URL.revokeObjectURL(s.url);
+  shots.length = 0;
+  $('logList').replaceChildren();
+  $('logSummary').textContent = '';
+  $('logDownloadAll').hidden = true;
+}
+
+function bindLog() {
+  $('logBtn').append(icon('log', 16));
+  $('logClear').append(icon('trash', 14));
+  $('logClose').append(icon('close', 14));
+  $('logBtn').addEventListener('click', () => showLog($('logPanel').hidden));
+  $('logClose').addEventListener('click', () => showLog(false));
+  $('logClear').addEventListener('click', clearLog);
+  // Chrome may ask once to allow multiple downloads from the extension.
+  $('logDownloadAll').addEventListener('click', async () => {
+    for (const s of shots) {
+      downloadShot(s);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  });
 }
 
 // ---------- Site access ----------
@@ -722,7 +856,21 @@ async function refreshTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   state.tab = tab || null;
   state.access = await getAccess(state.tab);
+  state.allSites = await chrome.permissions.contains({ origins: ['<all_urls>'] });
   renderBanner();
+}
+
+// Chrome only lets extensions capture a tab with all-sites access (or a
+// fresh toolbar click), so plans with Screenshot steps ask for it once, at
+// Run. Like requestSiteAccess, call this directly from the click handler.
+function requestCaptureAccess() {
+  if (state.allSites) return Promise.resolve(true);
+  if (state.access.kind === 'restricted' || state.access.kind === 'file-blocked') return requestSiteAccess();
+  return chrome.permissions.request({ origins: ['<all_urls>'] }).then(async (ok) => {
+    await refreshTab();
+    if (!ok) toast('Screenshot steps need permission to capture pages. Allow it, or turn those steps off.', 'error', 5000);
+    return ok;
+  });
 }
 
 function renderBanner() {
@@ -802,6 +950,29 @@ function togglePick(b, f) {
     } catch (e) {
       state.pick = null;
       rerenderBlock(b.id);
+      toast(friendlyError(e.message), 'error');
+    }
+  });
+}
+
+// "Find": flash every element the selector matches and say how many.
+function findOnPage(selector) {
+  if (!selector.trim()) return toast('Enter or pick a selector first.', 'error');
+  if (busy()) return;
+  const tab = state.tab;
+  requestSiteAccess().then(async (ok) => {
+    if (!ok || !tab) return;
+    try {
+      const target = { tabId: tab.id };
+      await chrome.scripting.executeScript({ target, files: ['src/content/actions.js'] });
+      const [res] = await chrome.scripting.executeScript({ target, func: (s) => window.__clickflow.highlight(s), args: [selector] });
+      const r = res?.result;
+      if (!r?.ok) return toast(r?.error || 'The page did not respond.', 'error');
+      if (!r.count) return toast('Nothing on this page matches that selector.', 'error');
+      const hidden = r.count - r.visible;
+      toast(`${r.count} match${r.count === 1 ? '' : 'es'}${hidden ? ` (${hidden} hidden)` : ''}${r.count > 1 ? '. Steps use the first one.' : '.'}`,
+        r.count === 1 ? 'ok' : 'info');
+    } catch (e) {
       toast(friendlyError(e.message), 'error');
     }
   });
@@ -903,6 +1074,14 @@ function onRecorded(msg, sender) {
   if (raw.secret === true) b.note = 'Sensitive field: its value was not recorded. Type it in this step or use {{value}}.';
 
   const p = plan();
+  if (b.type === 'click' && b.button === 'double') {
+    for (let i = 0; i < 2; i++) {
+      const prev = p.blocks.at(-1);
+      if (prev?.type !== 'click' || prev.button !== 'left' || prev.selector !== b.selector) break;
+      p.blocks.pop();
+      rec.added--;
+    }
+  }
   const last = p.blocks.at(-1);
   // Consecutive typing into the same field is one step.
   if (b.type === 'type' && last?.type === 'type' && last.selector === b.selector) {
@@ -951,7 +1130,11 @@ const runner = new Runner({
     state.run.errors[blockId] = run != null ? `Run ${run + 1}: ${message}` : message;
     rerenderBlock(blockId);
   },
-  onDone({ runs, ok, failed, stopped }) {
+  onStepDone: logStep,
+  onRetry: logRetry,
+  onScreenshot: logShot,
+  onDone({ runs, ok, failed, stopped, ms }) {
+    logSeparator(`${stopped ? 'Stopped' : 'Finished'} · ${ok}/${runs} runs ok · ${(ms / 1000).toFixed(1)} s`);
     $('progressFill').style.width = stopped ? '0%' : '100%';
     const text = stopped ? `Stopped after ${ok} of ${runs} run(s)`
       : failed ? `Finished: ${ok} ok, ${failed} failed`
@@ -982,17 +1165,28 @@ function renderDock() {
   else if (!running && /^Recording/.test($('runStatus').textContent)) $('runStatus').textContent = 'Ready';
 }
 
-function startRun() {
+function startRun(onlyBlockId = null) {
   if (busy()) return;
   const tab = state.tab;
-  requestSiteAccess().then((ok) => {
+  const only = onlyBlockId && plan().blocks.find((b) => b.id === onlyBlockId);
+  const capture = only ? only.type === 'screenshot' : plan().blocks.some((b) => b.enabled && b.type === 'screenshot');
+  (capture ? requestCaptureAccess() : requestSiteAccess()).then((ok) => {
     if (!ok || !tab) return;
     cancelPick();
     state.run.errors = {};
     showTab('steps');
     $('progressFill').style.width = '0%';
     $('runStatus').textContent = 'Starting…';
-    runner.start(structuredClone(plan()), tab.id).catch((e) => {
+    const snapshot = structuredClone(plan());
+    if (only) {
+      // Test one step: just that step, once, with each data set's first value.
+      Object.assign(snapshot, { blocks: [{ ...structuredClone(only), enabled: true }], runsMode: 'fixed', runs: 1, whenShort: 'cycle' });
+    }
+    const { runs } = runCount(snapshot);
+    showLog(true);
+    if (only) logSeparator(`Testing step ${plan().blocks.indexOf(only) + 1} · ${BLOCK_TYPES[only.type].label}`);
+    else logSeparator(`Started ${new Date().toLocaleTimeString()} · ${runs} run${runs === 1 ? '' : 's'} × ${snapshot.blocks.filter((x) => x.enabled).length} steps`);
+    runner.start(snapshot, tab.id).catch((e) => {
       $('runStatus').textContent = 'Ready';
       toast(e.message, 'error', 4500);
     });
@@ -1021,6 +1215,7 @@ async function init() {
   $('privacyIcon').replaceWith(icon('shield'));
   buildAddMenu();
   bindTabs();
+  bindLog();
 
   $('planSelect').addEventListener('change', (e) => switchPlan(e.target.value));
   $('planMenuBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu($('planMenuBtn'), $('planMenu')); });

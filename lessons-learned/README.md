@@ -6,6 +6,7 @@ A running log of bugs found in reviews and testing: what broke, why, and what no
 
 | Date | Entry | Topics |
 |---|---|---|
+| 2026-10-31 | [Speed & upgrades review](2026-10-31-speed-and-upgrades-review.md) | per-step overhead 160→49 ms, auto run count, hidden-element clicks, screenshot permission, test assumptions |
 | 2026-10-31 | [Google search review](2026-10-31-google-search-review.md) | Enter in `<textarea>`, isolated-world `keyCode`, generated ids/classes, recorder gaps |
 | 2026-10-31 | [Initial build](2026-10-31-initial-build.md) | `hidden` vs CSS `display`, extension CSP vs test tools, picker race, scroll budget, Windows shell encoding |
 
@@ -30,3 +31,6 @@ Create `YYYY-MM-DD-short-topic.md` with one section per lesson, and add a row to
 4. **Register state before you trigger an async action that can reply.** Example: store the pick request before activating the picker.
 5. **Never trust a selector the browser can regenerate.** Prefer `name`, `aria-label`, test ids, or `href` over ids and classes that look generated.
 6. **Every user-reported bug gets a failing e2e test first**, then the fix.
+7. **Measure before optimizing, and keep the measurement as a test.** The e2e speed budget catches regressions in per-step overhead.
+8. **Act like a person.** Wait for elements to be visible, not just present, before clicking or typing.
+9. **Check Chrome's permission rules for each API early.** Some, like `captureVisibleTab`, need more than per-site access.
