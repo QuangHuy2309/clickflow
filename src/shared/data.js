@@ -1,53 +1,25 @@
-// Data table helpers: run rows, {{column}} templating, and paste parsing.
+// Data sets → per-run values, and {{name}} templating.
 
-import { BLOCK_TYPES } from './schema.js';
+import { BLOCK_TYPES, LIMITS, splitValues } from './schema.js';
 
 const PLACEHOLDER_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 
-// A list of values: "auto" splits by lines when there is more than one line,
-// else by commas.
-export function parseDataList(text, mode = 'auto') {
-  if (typeof text !== 'string' || !text.trim()) return [];
-  const resolved = mode === 'auto' ? (/\r?\n/.test(text.trim()) ? 'lines' : 'comma') : mode;
-  const parts = resolved === 'lines' ? text.split(/\r?\n/) : text.split(',');
-  return parts.map((s) => s.trim()).filter(Boolean);
-}
+export { splitValues };
 
-// Pasted text → rows of cells. Lines are rows; cells split on tabs (Excel /
-// Sheets) or, for multi-column tables, commas. A single comma-separated line
-// pasted into a one-column table becomes one row per item.
-export function parsePaste(text, columnCount) {
-  if (typeof text !== 'string' || !text.trim()) return [];
-  const lines = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n');
-  const hasTabs = text.includes('\t');
-  if (columnCount === 1 && !hasTabs) return parseDataList(text).map((v) => [v]);
-  return lines
-    .map((line) => (hasTabs ? line.split('\t') : line.split(',')).map((c) => c.trim()))
-    .filter((cells) => cells.some(Boolean));
-}
+export const datasetValues = (d) => splitValues(d.text, d.split);
 
-// Rows that contain at least one value, as { column: value } objects.
-export function runRows(plan) {
-  return plan.rows
-    .filter((r) => r.some((c) => c.trim()))
-    .map((r) => Object.fromEntries(plan.columns.map((c, i) => [c, r[i] ?? ''])));
-}
-
-// {{column}} → that column; {{value}} → the first column when no column is
-// named "value" (plans from v1.0); {{index}} → 1-based run number.
-export function applyTemplate(str, row, runIndex, columns = Object.keys(row)) {
+// {{name}} → that data set's value for this run; {{index}} → 1-based run number.
+export function applyTemplate(str, values, runIndex) {
   return str.replace(PLACEHOLDER_RE, (match, key) => {
     if (key === 'index') return String(runIndex + 1);
-    if (Object.hasOwn(row, key)) return row[key];
-    if (key === 'value' && columns.length) return row[columns[0]] ?? '';
-    return match;
+    return Object.hasOwn(values, key) ? values[key] : match;
   });
 }
 
-export function templateBlock(block, row, runIndex, columns) {
+export function templateBlock(block, values, runIndex) {
   const out = { ...block };
   for (const f of BLOCK_TYPES[block.type].fields) {
-    if (typeof out[f.key] === 'string' && f.kind !== 'enum') out[f.key] = applyTemplate(out[f.key], row, runIndex, columns);
+    if (typeof out[f.key] === 'string' && f.kind !== 'enum') out[f.key] = applyTemplate(out[f.key], values, runIndex);
   }
   return out;
 }
@@ -56,36 +28,57 @@ export function placeholders(str) {
   return [...String(str).matchAll(PLACEHOLDER_RE)].map((m) => m[1]);
 }
 
-// If the whole field is one placeholder, returns its column name.
-export function columnRef(str) {
+// If the whole field is one placeholder, returns the data set name.
+export function dataRef(str) {
   const m = /^\s*\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*$/.exec(String(str));
   return m ? m[1] : null;
 }
 
-// Placeholders used by a plan's steps that don't match any column.
-export function unknownPlaceholders(plan) {
-  const known = new Set([...plan.columns, 'index', 'value']);
-  const missing = new Set();
+function eachTextField(plan, fn, { enabledOnly = false } = {}) {
   for (const b of plan.blocks) {
-    if (!b.enabled) continue;
-    for (const f of BLOCK_TYPES[b.type].fields) {
-      if (typeof b[f.key] === 'string') for (const p of placeholders(b[f.key])) if (!known.has(p)) missing.add(p);
-    }
+    if (enabledOnly && !b.enabled) continue;
+    for (const f of BLOCK_TYPES[b.type].fields) if (typeof b[f.key] === 'string') fn(b, f);
   }
-  return [...missing];
 }
 
-// Renames {{old}} to {{new}} in every step.
+// Names of data sets used by the plan's steps.
+export function usedDatasets(plan, opts) {
+  const used = new Set();
+  eachTextField(plan, (b, f) => { for (const p of placeholders(b[f.key])) used.add(p); }, opts);
+  used.delete('index');
+  return used;
+}
+
+// Placeholders used by enabled steps that don't match any data set.
+export function unknownPlaceholders(plan) {
+  const known = new Set(plan.datasets.map((d) => d.name));
+  return [...usedDatasets(plan, { enabledOnly: true })].filter((p) => !known.has(p));
+}
+
+// Renames {{from}} to {{to}} in every step.
 export function renameReferences(plan, from, to) {
   const re = new RegExp(`\\{\\{\\s*${from}\\s*\\}\\}`, 'g');
-  for (const b of plan.blocks) {
-    for (const f of BLOCK_TYPES[b.type].fields) {
-      if (typeof b[f.key] === 'string') b[f.key] = b[f.key].replace(re, `{{${to}}}`);
-    }
-  }
+  eachTextField(plan, (b, f) => { b[f.key] = b[f.key].replace(re, `{{${to}}}`); });
 }
 
-// A readable column name for a field, e.g. "#email" → "email".
+// The values each run gets, as { setName: value } objects. A set with fewer
+// values than runs either starts over ("cycle"), gives "" ("empty"), or ends
+// the whole job early ("stop", counting only sets the steps actually use).
+export function planRuns(plan) {
+  const sets = plan.datasets.map((d) => ({ name: d.name, values: datasetValues(d) }));
+  let runs = Math.min(plan.runs, LIMITS.runs);
+  if (plan.whenShort === 'stop') {
+    const used = usedDatasets(plan, { enabledOnly: true });
+    for (const s of sets) if (used.has(s.name)) runs = Math.min(runs, s.values.length);
+  }
+  return Array.from({ length: runs }, (_, i) => Object.fromEntries(sets.map((s) => {
+    if (!s.values.length) return [s.name, ''];
+    if (i < s.values.length) return [s.name, s.values[i]];
+    return [s.name, plan.whenShort === 'cycle' ? s.values[i % s.values.length] : ''];
+  })));
+}
+
+// A readable name for a field, e.g. "#email" → "email".
 export function nameFromSelector(selector) {
   const s = String(selector);
   const m = /#([A-Za-z][\w-]*)\s*$/.exec(s)

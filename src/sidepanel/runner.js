@@ -1,7 +1,7 @@
 // Runs a plan: for each data row (or repeat), each enabled block in order.
 // Steps are sent to the page as structured data via chrome.scripting.
 
-import { runRows, templateBlock, unknownPlaceholders } from '../shared/data.js';
+import { planRuns, templateBlock, unknownPlaceholders } from '../shared/data.js';
 import { BLOCK_TYPES, LIMITS, validateBlock } from '../shared/schema.js';
 import { friendlyError } from './site.js';
 
@@ -31,9 +31,9 @@ export class Runner {
       }
     }
     const missing = unknownPlaceholders(plan);
-    if (missing.length) throw new Error(`No data column named ${missing.map((m) => `“${m}”`).join(', ')}. Add it in the Data tab.`);
-    const rows = runRows(plan);
-    const values = rows.length ? rows : Array(plan.repeat).fill(Object.fromEntries(plan.columns.map((c) => [c, ''])));
+    if (missing.length) throw new Error(`No data set named ${missing.map((m) => `“${m}”`).join(', ')}. Add it in the Data tab.`);
+    const values = planRuns(plan);
+    if (!values.length) throw new Error('A data set used by your steps is empty. Add values in the Data tab.');
     if (values.length > LIMITS.runs) throw new Error(`Too many runs (max ${LIMITS.runs}).`);
 
     this.tabId = tabId;
@@ -49,7 +49,7 @@ export class Runner {
           if (!(await this._checkpoint())) break outer;
           const block = blocks[s];
           this.hooks.onProgress?.({ run: r, runs: values.length, step: s, steps: blocks.length, blockId: block.id });
-          const res = await this._execute(templateBlock(block, values[r], r, plan.columns));
+          const res = await this._execute(templateBlock(block, values[r], r));
           if (this._stopped) break outer;
           if (!res.ok) {
             failed = true;

@@ -38,8 +38,8 @@
 
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button role="tab" id="tab-steps" aria-controls="panel-steps" aria-selected="true">Steps <span id="stepCount" class="count"></span></button>
-    <button role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false">Data <span id="runCount" class="count"></span></button>
-    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Settings</button>
+    <button role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false">Data <span id="dataCount" class="count"></span></button>
+    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Settings <span id="runCount" class="count"></span></button>
   </nav>
 
   <div id="siteBanner" class="banner" hidden></div>
@@ -64,28 +64,47 @@
     </section>
 
     <section id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
-      <div class="card">
-        <div class="section-head">
-          <h2>Data table</h2>
-          <span id="runSummary" class="pill pill-accent"></span>
-        </div>
-        <p class="muted small">Each <strong>row</strong> is one run and each <strong>column</strong> is a value you can use in steps, like <code>{{name}}</code>. You can paste straight from Excel or Google Sheets.</p>
-        <div class="table-wrap">
-          <table id="dataTable" class="data-table" aria-label="Data table"></table>
-        </div>
-        <div id="rowsMore" class="rows-more" hidden></div>
-        <div class="table-actions">
-          <button id="addRowBtn" class="btn btn-ghost btn-small"></button>
-          <button id="pasteBtn" class="btn btn-ghost btn-small"></button>
-          <button id="clearRowsBtn" class="btn btn-ghost btn-small"></button>
-        </div>
-        <p class="hint"><span id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
+      <div class="section-intro">
+        <h2>Data sets</h2>
+        <p class="muted">Each data set is its own list of values. A step that uses a set gets its 1st value on run 1, its 2nd value on run 2, and so on, so each text box can have a different list.</p>
       </div>
+      <div id="datasetList" class="datasets"></div>
+      <div id="dataEmpty" class="data-empty" hidden>
+        <strong>No data sets yet</strong>
+        <span class="muted">Add one, or choose <em>+ New data set</em> in a Type text step.</span>
+      </div>
+      <button id="addDatasetBtn" class="btn btn-add"></button>
+      <p class="hint"><span id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
     </section>
 
     <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
       <div class="card">
-        <div class="section-head"><h2>Run settings</h2></div>
+        <div class="section-head"><h2>Runs</h2><span id="runSummary" class="pill pill-accent"></span></div>
+        <div class="field">
+          <label for="runs">Number of runs</label>
+          <div class="runs-row">
+            <input id="runs" type="number" min="1" max="10000">
+            <div class="quick-runs" id="quickRuns" role="group" aria-label="Quick run counts">
+              <button type="button" data-runs="1">1</button>
+              <button type="button" data-runs="3">3</button>
+              <button type="button" data-runs="5">5</button>
+              <button type="button" data-runs="10">10</button>
+            </div>
+          </div>
+          <button type="button" id="matchLongestBtn" class="link-btn align-left"></button>
+        </div>
+        <div class="field">
+          <label for="whenShort">When a data set has fewer values than runs</label>
+          <select id="whenShort">
+            <option value="cycle">Start again from its first value</option>
+            <option value="empty">Leave the field empty</option>
+            <option value="stop">Stop when the shortest set runs out</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-head"><h2>Timing &amp; errors</h2></div>
         <div class="grid">
           <div class="field">
             <label for="stepDelay">Delay between steps (ms)</label>
@@ -95,11 +114,7 @@
             <label for="runDelay">Delay between runs (ms)</label>
             <input id="runDelay" type="number" min="0" max="600000" step="100">
           </div>
-          <div class="field">
-            <label for="repeat">Repeat when there's no data</label>
-            <input id="repeat" type="number" min="1" max="10000">
-          </div>
-          <div class="field">
+          <div class="field span-2">
             <label for="onError">If a step fails</label>
             <select id="onError">
               <option value="stop">Stop everything</option>

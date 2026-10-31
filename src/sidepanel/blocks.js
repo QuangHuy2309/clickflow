@@ -13,7 +13,13 @@ const short = (s, n = 28) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
-const duration = (ms) => (ms >= 1000 ? `${+(ms / 1000).toFixed(2)} s` : `${ms} ms`);
+// "{{email}}" reads as "email (data set)"; other text is quoted.
+const value = (s, n) => {
+  const m = /^\s*\{\{\s*([A-Za-z_]\w*)\s*\}\}\s*$/.exec(String(s || ''));
+  return m ? `${m[1]} (data set)` : `“${short(s, n)}”`;
+};
+
+const duration =(ms) => (ms >= 1000 ? `${+(ms / 1000).toFixed(2)} s` : `${ms} ms`);
 
 export function summarize(b) {
   const sel = short(b.selector) || 'no element yet';
@@ -21,9 +27,9 @@ export function summarize(b) {
     case 'click':
       return b.selector ? `Click ${sel}` : 'Choose an element to click';
     case 'type':
-      return `“${short(b.text, 20)}” → ${sel}`;
+      return `${value(b.text, 20)} → ${sel}`;
     case 'select':
-      return `Find “${short(b.match, 18)}” in ${sel}`;
+      return `Find ${value(b.match, 18)} in ${sel}`;
     case 'wait':
       if (b.mode === 'time') return duration(b.ms);
       return `Until ${sel} ${b.mode === 'appear' ? 'appears' : 'disappears'}`;

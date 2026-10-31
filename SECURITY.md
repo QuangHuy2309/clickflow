@@ -32,7 +32,7 @@ ClickFlow has no content scripts that run on every page, and its service worker 
 
 ## Things to keep in mind
 
-- Plans and data tables are stored **unencrypted** on your device. Don't put passwords or other secrets in them.
+- Plans and data sets are stored **unencrypted** on your device. Don't put passwords or other secrets in them.
 - Only import plans from people you trust, and read through the steps before you press Run.
 
 ## Reporting a vulnerability

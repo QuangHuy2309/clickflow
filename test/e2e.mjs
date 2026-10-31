@@ -139,66 +139,73 @@ try {
   assert.deepEqual(await site.locator('#log li').allTextContents(), ['name=alice email=alice@x.com country=jp city=City 5']);
   ok('recorded 7 steps from real page use:', summaries);
 
-  // ---- {{ }} on the name field: the default column is renamed to "name".
+  // ---- Text box 1 and text box 2 each get their own data set via the Value dropdown.
   await cards.nth(1).locator('.block-title').click();
-  await cards.nth(1).locator('.var-btn').click();
-  assert.equal(await cards.nth(1).locator('textarea').inputValue(), '{{name}}');
-  // ---- {{ }} on the email field adds a second column, "email".
+  assert.equal(await cards.nth(1).locator('.source-select').inputValue(), '__fixed__');
+  await cards.nth(1).locator('.source-select').selectOption('__new__');
   await cards.nth(2).locator('.block-title').click();
-  await cards.nth(2).locator('.var-btn').click();
-  // With 2+ columns, variable fields show a value-source dropdown instead of typing.
+  await cards.nth(2).locator('.source-select').selectOption('__new__');
   assert.equal(await cards.nth(1).locator('.source-select').inputValue(), 'name');
   assert.equal(await cards.nth(2).locator('.source-select').inputValue(), 'email');
-  assert.equal(await cards.nth(2).locator('.uses-column code').textContent(), 'email');
-  ok('{{ }} created columns "name" and "email"; fields now show a column dropdown');
+  assert.equal(await cards.nth(1).locator('.uses-set code').textContent(), 'name');
+  ok('Value dropdown created data sets "name" and "email" from the recorded text');
 
-  // ---- Use the dropdown on the city step to create a third column.
-  await cards.nth(5).locator('.block-title').click();
-  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), '__fixed__');
-  await cards.nth(5).locator('.source-select').selectOption('__new__');
-  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), 'cityList');
-  await panel.screenshot({ path: join(out, 'panel-columns.png') });
+  // The other text box can switch between sets from the same dropdown.
+  await cards.nth(2).locator('.source-select').selectOption('name');
+  assert.equal(await cards.nth(2).locator('.uses-set code').textContent(), 'name');
+  await cards.nth(2).locator('.source-select').selectOption('email');
 
+  // ---- Data tab: one list per data set.
   await panel.click('#tab-data');
-  const headers = () => panel.locator('.col-head input').evaluateAll((els) => els.map((e) => e.value));
-  assert.deepEqual(await headers(), ['name', 'email', 'cityList']);
-  assert.deepEqual(await panel.locator('.cell').evaluateAll((els) => els.map((e) => e.value)), ['alice', 'alice@x.com', 'City 5']);
+  const setNames = () => panel.locator('.ds-name').evaluateAll((els) => els.map((e) => e.value));
+  assert.deepEqual(await setNames(), ['name', 'email']);
+  const sets = panel.locator('.dataset');
+  assert.equal(await sets.nth(0).locator('textarea').inputValue(), 'alice');
+  await sets.nth(0).locator('textarea').fill('alice\nbob\ncarol');
+  await sets.nth(1).locator('textarea').fill('a@x.com\nb@x.com');
+  assert.equal(await sets.nth(0).locator('.ds-count').textContent(), '3 values');
+  assert.equal(await sets.nth(1).locator('.ds-count').textContent(), '2 values');
+  assert.equal(await sets.nth(0).locator('.ds-used').count(), 1, 'marked as in use');
 
-  // Rename a column: steps follow.
-  await panel.locator('.col-head input').nth(2).fill('city');
-  await panel.locator('.col-head input').nth(2).press('Enter');
-  assert.deepEqual(await headers(), ['name', 'email', 'city']);
-
-  // Paste rows copied from a spreadsheet.
-  await panel.click('#pasteBtn');
-  await panel.fill('dialog textarea', 'name\temail\tcity\nalice\ta@x.com\tCity 5\nbob\tb@x.com\tCity 7\ncarol\tc@x.com\tCity 9');
-  await panel.click('dialog button[type=submit]');
-  assert.equal(await panel.textContent('#runCount'), '3');
-  // Edit a cell directly.
-  await panel.locator('.cell[data-r="2"][data-c="0"]').fill('carol');
+  // Add, rename and delete a data set.
+  await panel.click('#addDatasetBtn');
+  assert.deepEqual(await setNames(), ['name', 'email', 'list']);
+  await sets.nth(2).locator('.ds-name').fill('cities');
+  await sets.nth(2).locator('.ds-name').press('Enter');
+  assert.deepEqual(await setNames(), ['name', 'email', 'cities']);
+  await sets.nth(2).locator('.icon-btn.danger').click();
+  assert.deepEqual(await setNames(), ['name', 'email']);
   await panel.screenshot({ path: join(out, 'panel-data.png') });
-  await panel.click('#tab-steps');
-  assert.equal(await cards.nth(5).locator('.source-select').inputValue(), 'city', 'rename updated the step');
-  ok('table: rename column, paste from spreadsheet, edit cell');
+  ok('data sets: separate lists, add / rename / delete');
 
+  // ---- Settings: number of runs.
   await panel.click('#tab-settings');
+  assert.equal(await panel.textContent('#matchLongestBtn'), 'Match the longest data set (3 runs)');
+  await panel.click('#quickRuns button[data-runs="10"]');
+  assert.equal(await panel.inputValue('#runs'), '10');
+  await panel.click('#matchLongestBtn');
+  assert.equal(await panel.inputValue('#runs'), '3');
+  assert.equal((await panel.textContent('#runBtn')).trim(), 'Run 3×');
   await panel.fill('#stepDelay', '50');
   await panel.locator('#stepDelay').dispatchEvent('change');
   await panel.fill('#runDelay', '100');
   await panel.locator('#runDelay').dispatchEvent('change');
+  await panel.screenshot({ path: join(out, 'panel-settings.png') });
+  ok('runs set from quick buttons and "match longest"');
   await panel.click('#tab-steps');
 
-  // ---- Replay it 3 times with 3 values per run.
+  // ---- Run 3 times: each text box takes the next value from its own list;
+  // the shorter email list starts over.
   await panel.click('#runBtn');
   await site.waitForFunction(() => document.querySelectorAll('#log li').length === 4, null, { timeout: 60000 });
   await waitUntil(panel, () => document.getElementById('runStatus').textContent.startsWith('Done'), 20000);
   const log = await site.locator('#log li').allTextContents();
   assert.deepEqual(log.slice(1), [
     'name=alice email=a@x.com country=jp city=City 5',
-    'name=bob email=b@x.com country=jp city=City 7',
-    'name=carol email=c@x.com country=jp city=City 9',
+    'name=bob email=b@x.com country=jp city=City 5',
+    'name=carol email=a@x.com country=jp city=City 5',
   ]);
-  ok('replayed recording for 3 rows × 3 columns:', log.slice(1));
+  ok('3 runs with two independent data sets:', log.slice(1));
   await panel.screenshot({ path: join(out, 'panel-done.png') });
   await site.screenshot({ path: join(out, 'playground-after.png') });
 
@@ -216,10 +223,8 @@ try {
   await cards.last().locator('.input-group input').fill('#does-not-exist');
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').fill('300');
   await cards.last().locator('.field', { hasText: 'Wait for element' }).locator('input').dispatchEvent('change');
-  await panel.click('#tab-data');
-  await panel.click('#pasteBtn');
-  await panel.fill('dialog textarea', 'dave\td@x.com\tCity 1');
-  await panel.click('dialog button[type=submit]');
+  await panel.click('#tab-settings');
+  await panel.click('#quickRuns button[data-runs="1"]');
   await panel.click('#tab-steps');
   await panel.click('#runBtn');
   await panel.waitForSelector('.block.is-error .block-error', { timeout: 20000 });

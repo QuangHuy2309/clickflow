@@ -1,15 +1,16 @@
 # ClickFlow
 
-A Chrome extension for automating repetitive clicks and typing on web pages. You build a plan out of steps, and ClickFlow runs it once for every row of a data table.
+A Chrome extension for automating repetitive clicks and typing on web pages. You build a plan out of steps, and ClickFlow runs it as many times as you choose. Each text box can take the next value from its own list on every run.
 
 ![promo](store/promo-small-440x280.png)
 
 ## Features
 
 - **Record instead of building by hand.** Press **Record** and use the page as you normally would. Each click, text entry, and dropdown choice appears as a step. Clicks on items in scrollable lists become "find in list" steps, so they keep working when the list moves or loads more items. Typing into the same field is combined into a single step. Password and payment fields are never recorded.
-- **One-click variables.** On a recorded field, press `{{ }}` to fill it from the data table instead. The recorded value becomes the first row. Each field you do this for gets its own column, named after the field (`#email` becomes `email`). Once the table has more than one column, text fields show a **dropdown** where you choose *Fixed text*, a column, or *+ New column*, so you don't have to type placeholders.
+- **Data sets: a separate list for each text box.** In the **Data** tab, press **+ Add data set** to create a named list of strings, one per line or comma-separated. Make one for each field that needs different values, for example `names` for the first text box and `emails` for the second. On run 1 each step gets the 1st value of its set, on run 2 the 2nd, and so on.
+- **Choose the data set from a dropdown.** Type text and Select steps have a **Value** dropdown: *Fixed text*, any of your data sets, or *+ New data set*. That last option creates a set named after the field (`#email` becomes `email`), starting with the text you recorded.
+- **Choose how many runs.** In **Settings**, set the number of runs (quick buttons for 1, 3, 5, and 10, or match the longest data set). You also choose what happens when a set has fewer values than runs: start again from its first value, leave the field empty, or stop.
 - **Steps you can rearrange.** Each step is a block: Click, Type text, Select / find in list, Wait, or Scroll. You can drag blocks to reorder them, move them with the arrow buttons or the keyboard (focus the handle, then press ↑/↓), and duplicate, disable, or delete them.
-- **Data-driven runs with multiple values.** The Data tab is a table: each **row** is one run and each **column** is a named value such as `{{name}}` or `{{email}}`. You can edit cells directly (Enter moves down a row), paste from Excel or Google Sheets into any cell or with **Paste…**, and add, rename, or delete columns. Renaming a column updates every step that uses it, and `{{index}}` gives the run number.
 - **Element picker.** Click **Pick**, then click any element on the page. ClickFlow fills in a stable CSS selector for it.
 - **Works with dropdowns and long lists.** ClickFlow handles native `<select>` menus, and it can scroll custom lists, including lazy-loading ones, until it finds the value you asked for.
 - **Clear control while running.** A progress bar shows run and step, and the current step is highlighted. You can pause, resume, or stop at any time, and pressing Esc on the page also stops the run. A badge on the page shows when ClickFlow is acting.
@@ -30,24 +31,15 @@ npm run playground   # serves test/playground.html on http://localhost:5500
 
 Open `http://localhost:5500/playground.html`, click the ClickFlow icon, and allow access to `localhost`.
 
-**Quickest way:**
 1. Press **Record**. Type a name and an email, choose a country, open the city list and pick a city, then click Submit.
 2. Press **Stop**.
-3. Press `{{ }}` on the name step and then on the email step. This creates the `name` and `email` columns.
-4. On the city step, choose **+ New column** in the dropdown.
-5. In the **Data** tab, paste a few rows (for example `bob<TAB>b@x.com<TAB>City 7`) and press **Run**.
+3. Open the name step and choose **+ New data set** in its Value dropdown. Do the same on the email step.
+4. In the **Data** tab, put three names in the `name` set and two emails in the `email` set.
+5. In **Settings**, choose **3** runs and press **Run 3×**.
 
-**Or build the plan by hand:**
+The Submissions box should show alice, bob, and carol. Because the email set is shorter, its values start over: a, b, then a again.
 
-| # | Step | Settings |
-|---|------|----------|
-| 1 | Type text | Input field `#name`, text `{{name}}` |
-| 2 | Type text | Input field `#email`, text `{{email}}` |
-| 3 | Select / find in list | `#country`, value `Japan` |
-| 4 | Select / find in list | List `#cityList`, opener `#cityBtn`, value `Tokyo` |
-| 5 | Click | `#submit` |
-
-In the Data tab, name the columns `name` and `email` and add three rows, then press **Run**. The Submissions box on the page should show three entries.
+You can also build the same plan by hand: add Type text steps for `#name` and `#email` and set their Value dropdowns to your data sets.
 
 ## Development
 

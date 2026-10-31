@@ -1,7 +1,7 @@
 import {
-  BLOCK_TYPES, LIMITS, cleanColumnName, isShown, newBlock, newId, newPlan, sanitizeBlock, uniqueColumnName,
+  BLOCK_TYPES, LIMITS, cleanDataName, isShown, newBlock, newDataset, newId, newPlan, sanitizeBlock, uniqueDataName,
 } from '../shared/schema.js';
-import { columnRef, nameFromSelector, parsePaste, placeholders, renameReferences, runRows } from '../shared/data.js';
+import { dataRef, datasetValues, nameFromSelector, renameReferences, usedDatasets } from '../shared/data.js';
 import { BLOCK_UI, summarize } from './blocks.js';
 import { h, icon } from './dom.js';
 import { exportPlan, flushState, loadState, readImportFile, saveState } from './storage.js';
@@ -361,105 +361,77 @@ function fieldControl(b, f, li) {
   return h('div', { class: 'field' }, h('label', { for: id }, f.label), control, f.hint && h('small', {}, f.hint));
 }
 
-// Fields that can take a data column. With several columns they get a value
-// source dropdown instead of typing {{…}}; with one column, a {{ }} button.
+// Fields that can take data: a Value dropdown picks fixed text or a data set.
 const FIXED = '__fixed__';
-const NEW_COLUMN = '__new__';
+const NEW_SET = '__new__';
 
 function variableControl(b, f, input) {
   const p = plan();
-  const ref = columnRef(b[f.key]);
-  const column = ref && (p.columns.includes(ref) ? ref : ref === 'value' ? p.columns[0] : null);
-
-  if (p.columns.length > 1) {
-    const select = h('select', {
-      class: `source-select${column ? '' : ' fixed'}`,
-      'aria-label': `${f.label} source`,
-      onchange: (e) => {
-        const v = e.target.value;
-        if (v === FIXED) setFieldSource(b, f, null);
-        else if (v === NEW_COLUMN) setFieldSource(b, f, addColumn(nameFromSelector(b.selector)));
-        else setFieldSource(b, f, v);
-      },
+  const ref = dataRef(b[f.key]);
+  const set = ref && p.datasets.find((d) => d.name === ref);
+  const select = h('select', {
+    class: `source-select${set ? '' : ' fixed'}`,
+    'aria-label': `${f.label}: value source`,
+    title: 'Where this value comes from on each run',
+    onchange: (e) => {
+      const v = e.target.value;
+      if (v === FIXED) setFieldSource(b, f, null);
+      else if (v === NEW_SET) createSetFor(b, f);
+      else setFieldSource(b, f, v);
     },
-    h('option', { value: FIXED, selected: !column }, 'Fixed text'),
-    h('optgroup', { label: 'Data column' }, p.columns.map((c) => h('option', { value: c, selected: c === column }, `{{${c}}}`))),
-    p.columns.length < LIMITS.columns && h('option', { value: NEW_COLUMN }, '+ New column'));
-    const body = column
-      ? h('div', { class: 'uses-column' }, 'Each run uses', h('code', {}, column))
-      : input;
-    return h('div', { class: 'input-group' }, body, select);
-  }
+  },
+  h('option', { value: FIXED, selected: !set }, 'Fixed text'),
+  p.datasets.length > 0 && h('optgroup', { label: 'Data set' },
+    p.datasets.map((d) => h('option', { value: d.name, selected: d.name === set?.name }, `${d.name} (${datasetValues(d).length})`))),
+  p.datasets.length < LIMITS.datasets && h('option', { value: NEW_SET }, '+ New data set'));
 
-  if (column) return input;
-  return h('div', { class: 'input-group' }, input, h('button', {
-    type: 'button',
-    class: 'chip-btn var-btn',
-    title: 'Use a data column here: the current text moves into the Data table',
-    'aria-label': 'Use a data column',
-    onclick: () => makeVariable(b, f),
-  }, '{{ }}'));
+  let body = input;
+  if (set) {
+    const values = datasetValues(set);
+    body = h('button', { type: 'button', class: 'uses-set', title: 'Edit this data set', onclick: () => openDataset(set.id) },
+      h('code', {}, set.name),
+      h('span', { class: 'uses-preview' }, values.length
+        ? `${values.slice(0, 3).join(' · ')}${values.length > 3 ? ' …' : ''}`
+        : 'empty, add values'));
+  } else if (ref) {
+    body = h('div', { class: 'uses-set missing' }, `Data set “${ref}” doesn't exist`);
+  }
+  return h('div', { class: 'input-group' }, body, select);
 }
 
-function referencedColumns(p) {
-  const used = new Set();
-  for (const b of p.blocks) {
-    for (const f of BLOCK_TYPES[b.type].fields) {
-      if (typeof b[f.key] === 'string') for (const name of placeholders(b[f.key])) used.add(name === 'value' && !p.columns.includes('value') ? p.columns[0] : name);
-    }
-  }
-  return used;
-}
-
-function addColumn(base) {
+// "+ New data set": named after the field, seeded with the step's current text.
+function createSetFor(b, f) {
   const p = plan();
-  const name = uniqueColumnName(base, p.columns);
-  p.columns.push(name);
-  for (const r of p.rows) r.push('');
-  return name;
+  const name = uniqueDataName(nameFromSelector(b.selector) || (f.key === 'match' ? 'option' : 'text'), p.datasets.map((d) => d.name));
+  const literal = dataRef(b[f.key]) ? '' : b[f.key].trim();
+  const set = newDataset(name, literal);
+  p.datasets.push(set);
+  b[f.key] = `{{${name}}}`;
+  save();
+  renderBlocks();
+  renderData();
+  toast(literal ? `Data set “${name}” created with “${literal}”. Add more values in the Data tab.`
+    : `Data set “${name}” created. Add its values in the Data tab.`, 'ok', 4000);
 }
 
-// {{ }} button: use the first column no step uses yet (renaming a pristine
-// default column after the field), otherwise create a new column.
-function makeVariable(b, f) {
-  const p = plan();
-  const used = referencedColumns(p);
-  let column = p.columns.find((c) => !used.has(c));
-  const suggested = nameFromSelector(b.selector);
-  if (column === 'value' && suggested && p.rows.every((r) => !r[0].trim())) {
-    const renamed = uniqueColumnName(suggested, p.columns.filter((c) => c !== 'value'));
-    p.columns[0] = renamed;
-    renameReferences(p, 'value', renamed);
-    column = renamed;
-  }
-  if (!column) {
-    if (p.columns.length >= LIMITS.columns) return toast(`A table can have up to ${LIMITS.columns} columns.`, 'error');
-    column = addColumn(suggested);
-  }
-  setFieldSource(b, f, column);
-}
-
-// Points a field at a column (seeding the table with its old text) or back to fixed text.
-function setFieldSource(b, f, column) {
-  const p = plan();
-  const old = b[f.key];
-  if (!column) {
-    b[f.key] = '';
+function setFieldSource(b, f, name) {
+  if (name) {
+    b[f.key] = `{{${name}}}`;
   } else {
-    b[f.key] = `{{${column}}}`;
-    const i = p.columns.indexOf(column);
-    const literal = columnRef(old) ? '' : old.trim();
-    if (literal && p.rows.every((r) => !r[i].trim())) {
-      if (!p.rows.length) p.rows.push(p.columns.map(() => ''));
-      p.rows[0][i] = literal;
-      toast(`“${literal}” moved to column ${column} in the Data tab.`, 'ok', 4000);
-    } else {
-      toast(`This step now uses column ${column}.`, 'ok');
-    }
+    // Back to fixed text, starting from the set's first value.
+    const set = plan().datasets.find((d) => d.name === dataRef(b[f.key]));
+    b[f.key] = set ? (datasetValues(set)[0] ?? '') : '';
   }
   save();
   renderBlocks();
   renderData();
+}
+
+function openDataset(id) {
+  showTab('data');
+  const card = $('datasetList').querySelector(`[data-id="${CSS.escape(id)}"]`);
+  card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  card?.querySelector('textarea')?.focus({ preventScroll: true });
 }
 
 function addBlock(type) {
@@ -565,239 +537,166 @@ function closeMenus() {
   }
 }
 
-// ---------- Data & settings ----------
+// ---------- Data sets ----------
 
-const SHOWN_ROWS = 200;
+const countText = (n) => `${n} value${n === 1 ? '' : 's'}`;
 
 function renderData() {
   const p = plan();
-  const cols = p.columns;
-
-  const head = h('tr', {},
-    h('th', { class: 'row-no', scope: 'col' }, '#'),
-    cols.map((c, ci) => h('th', { scope: 'col' }, h('div', { class: 'col-head' },
-      h('input', {
-        type: 'text',
-        size: 1,
-        value: c,
-        maxLength: LIMITS.columnName,
-        spellcheck: 'false',
-        'aria-label': `Column ${ci + 1} name`,
-        title: `Use as {{${c}}} in steps`,
-        onchange: (e) => renameColumn(ci, e.target),
-        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-      }),
-      cols.length > 1 && h('button', {
-        class: 'icon-btn danger', title: `Delete column ${c}`, 'aria-label': `Delete column ${c}`, onclick: () => deleteColumn(ci),
-      }, icon('trash', 13))))),
-    h('th', { class: 'add-col', scope: 'col' }, cols.length < LIMITS.columns && h('button', {
-      class: 'icon-btn', id: 'addColBtn', title: 'Add a column', 'aria-label': 'Add a column', onclick: onAddColumn,
-    }, icon('plus', 15))));
-
-  const body = p.rows.length
-    ? p.rows.slice(0, SHOWN_ROWS).map((row, ri) => h('tr', {},
-      h('td', { class: 'row-no' }, ri + 1),
-      cols.map((c, ci) => h('td', {}, h('input', {
-        type: 'text',
-        size: 1,
-        class: 'cell',
-        value: row[ci],
-        maxLength: LIMITS.text,
-        dataset: { r: String(ri), c: String(ci) },
-        'aria-label': `Row ${ri + 1}, ${c}`,
-      }))),
-      h('td', { class: 'row-del' }, h('button', {
-        class: 'icon-btn danger', title: 'Delete row', 'aria-label': `Delete row ${ri + 1}`, onclick: () => deleteRow(ri),
-      }, icon('trash', 13)))))
-    : [h('tr', {}, h('td', { class: 'empty-rows', colSpan: cols.length + 2 }, 'No rows yet. Add a row, or paste from a spreadsheet.'))];
-
-  $('dataTable').replaceChildren(h('thead', {}, head), h('tbody', {}, body));
-  $('rowsMore').hidden = p.rows.length <= SHOWN_ROWS;
-  $('rowsMore').textContent = `Showing ${SHOWN_ROWS} of ${p.rows.length} rows. Use Paste to replace them all.`;
+  const used = usedDatasets(p);
+  $('datasetList').replaceChildren(...p.datasets.map((d, i) => datasetCard(d, i, used.has(d.name))));
+  $('dataEmpty').hidden = p.datasets.length > 0;
+  $('addDatasetBtn').hidden = p.datasets.length >= LIMITS.datasets;
+  $('dataCount').textContent = p.datasets.length || '';
   updateRunCount();
 }
 
-function updateRunCount() {
+function datasetCard(d, i, used) {
+  const count = h('span', { class: 'ds-count' });
+  const preview = h('div', { class: 'ds-preview', 'aria-label': 'Values by run' });
+  const refresh = () => {
+    const values = datasetValues(d);
+    count.textContent = countText(values.length);
+    const chips = values.slice(0, 8).map((v, n) => h('span', { class: 'chip', title: `Run ${n + 1}: ${v}` }, h('b', {}, n + 1), v));
+    if (values.length > 8) chips.push(h('span', { class: 'chip more' }, `+${values.length - 8} more`));
+    preview.replaceChildren(...chips);
+  };
+
+  const del = h('button', { class: 'icon-btn danger', title: 'Delete data set', 'aria-label': `Delete data set ${d.name}` }, icon('trash', 14));
+  del.addEventListener('click', () => deleteDataset(d.id));
+
+  const split = h('div', { class: 'segmented mini', role: 'radiogroup', 'aria-label': 'Separate values by' },
+    [['auto', 'Auto'], ['lines', 'Lines'], ['comma', 'Commas']].map(([value, label]) => h('button', {
+      type: 'button',
+      role: 'radio',
+      'aria-checked': String(d.split === value),
+      onclick: () => { d.split = value; save(); renderData(); renderBlocks(); },
+    }, label)));
+
+  const card = h('div', { class: `dataset c${i % 6}`, dataset: { id: d.id } },
+    h('div', { class: 'ds-head' },
+      h('input', {
+        type: 'text',
+        class: 'ds-name',
+        value: d.name,
+        maxLength: LIMITS.dataName,
+        spellcheck: 'false',
+        'aria-label': 'Data set name',
+        title: `Steps use this as {{${d.name}}}`,
+        onchange: (e) => renameDataset(d, e.target),
+        onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+      }),
+      used && h('span', { class: 'ds-used', title: 'Used by a step' }, 'In use'),
+      count,
+      del),
+    h('textarea', {
+      value: d.text,
+      rows: 4,
+      spellcheck: 'false',
+      maxLength: LIMITS.data,
+      placeholder: 'One value per line\nor separated, by, commas',
+      'aria-label': `Values for ${d.name}`,
+      oninput: (e) => { d.text = e.target.value; save(); refresh(); updateRunCount(); },
+      onchange: () => renderBlocks(),
+    }),
+    h('div', { class: 'ds-foot' }, split),
+    preview);
+  refresh();
+  return card;
+}
+
+function addDataset() {
   const p = plan();
-  const runs = runRows(p).length;
-  $('runCount').textContent = runs || '';
-  $('runSummary').textContent = runs
-    ? `${runs} run${runs === 1 ? '' : 's'} · ${p.columns.length} value${p.columns.length === 1 ? '' : 's'} each`
-    : `No data · runs ${p.repeat}×`;
-}
-
-function focusCell(r, c) {
-  const cell = $('dataTable').querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
-  cell?.focus();
-  cell?.select();
-}
-
-function addRow(focusCol = 0) {
-  const p = plan();
-  if (p.rows.length >= LIMITS.runs) return toast(`A table can have up to ${LIMITS.runs} rows.`, 'error');
-  p.rows.push(p.columns.map(() => ''));
-  save();
-  renderData();
-  focusCell(p.rows.length - 1, focusCol);
-}
-
-function deleteRow(ri) {
-  plan().rows.splice(ri, 1);
-  save();
-  renderData();
-}
-
-function onAddColumn() {
-  const p = plan();
-  if (p.columns.length >= LIMITS.columns) return;
-  const name = addColumn('column');
+  if (p.datasets.length >= LIMITS.datasets) return;
+  const set = newDataset(uniqueDataName('list', p.datasets.map((d) => d.name)));
+  p.datasets.push(set);
   save();
   renderData();
   renderBlocks();
-  const input = $('dataTable').querySelectorAll('.col-head input')[p.columns.indexOf(name)];
-  input?.focus();
-  input?.select();
+  const card = $('datasetList').querySelector(`[data-id="${CSS.escape(set.id)}"]`);
+  card.classList.add('just-added');
+  card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  card.querySelector('.ds-name').select();
 }
 
-function renameColumn(ci, input) {
+function renameDataset(d, input) {
   const p = plan();
-  const from = p.columns[ci];
-  const to = cleanColumnName(input.value);
-  if (to === from) { input.value = from; return; }
-  if (!to || p.columns.includes(to)) {
-    input.value = from;
-    return toast(to ? `There's already a column named ${to}.` : 'Column names use letters, numbers and _ and start with a letter.', 'error');
+  const to = cleanDataName(input.value);
+  if (to === d.name) { input.value = d.name; return; }
+  if (!to || p.datasets.some((x) => x.name === to)) {
+    input.value = d.name;
+    return toast(to ? `There's already a data set named ${to}.` : 'Names use letters, numbers and _ and start with a letter.', 'error');
   }
-  p.columns[ci] = to;
-  renameReferences(p, from, to);
+  renameReferences(p, d.name, to);
+  d.name = to;
   save();
   renderData();
   renderBlocks();
-  toast(`Renamed to {{${to}}}. Steps were updated.`, 'ok');
+  toast(`Renamed to ${to}. Steps were updated.`, 'ok');
 }
 
-async function deleteColumn(ci) {
+async function deleteDataset(id) {
   const p = plan();
-  const name = p.columns[ci];
-  if (referencedColumns(p).has(name)) {
+  const d = p.datasets.find((x) => x.id === id);
+  if (usedDatasets(p).has(d.name)) {
     const ok = await modal({
-      title: `Delete column ${name}?`,
-      message: `Some steps use {{${name}}}. They will fail until you choose another value for them.`,
-      confirm: 'Delete column',
+      title: `Delete data set ${d.name}?`,
+      message: 'Some steps use it. They will need another value before the plan can run.',
+      confirm: 'Delete',
       danger: true,
     });
     if (!ok) return;
   }
-  p.columns.splice(ci, 1);
-  for (const r of p.rows) r.splice(ci, 1);
+  p.datasets = p.datasets.filter((x) => x.id !== id);
   save();
   renderData();
   renderBlocks();
 }
 
-// Spreads pasted cells into the table starting at (r, c), growing it as needed.
-function pasteGrid(grid, r, c) {
+function bindData() {
+  $('addDatasetBtn').addEventListener('click', addDataset);
+}
+
+// ---------- Settings ----------
+
+function longestUsedSet(p) {
+  const used = usedDatasets(p);
+  const sets = p.datasets.filter((d) => used.has(d.name));
+  return Math.max(0, ...(sets.length ? sets : p.datasets).map((d) => datasetValues(d).length));
+}
+
+function updateRunCount() {
   const p = plan();
-  const neededCols = Math.min(LIMITS.columns, c + Math.max(...grid.map((g) => g.length)));
-  while (p.columns.length < neededCols) addColumn('column');
-  const fit = grid.slice(0, LIMITS.runs - r);
-  fit.forEach((cells, i) => {
-    if (!p.rows[r + i]) p.rows[r + i] = p.columns.map(() => '');
-    cells.forEach((v, j) => { if (c + j < p.columns.length) p.rows[r + i][c + j] = v.slice(0, LIMITS.text); });
-  });
+  $('runCount').textContent = p.runs > 1 ? `${p.runs}×` : '';
+  $('runBtn').replaceChildren(icon('play', 13), p.runs > 1 ? `Run ${p.runs}×` : 'Run');
+  $('runSummary').textContent = `${p.runs} run${p.runs === 1 ? '' : 's'}`;
+  const longest = longestUsedSet(p);
+  $('matchLongestBtn').hidden = !longest || longest === p.runs;
+  $('matchLongestBtn').textContent = `Match the longest data set (${longest} runs)`;
+  $('matchLongestBtn').dataset.runs = String(longest);
+  for (const btn of $('quickRuns').children) btn.setAttribute('aria-pressed', String(Number(btn.dataset.runs) === p.runs));
+}
+
+function setRuns(n) {
+  const p = plan();
+  p.runs = Math.min(LIMITS.runs, Math.max(1, Math.round(n) || 1));
+  $('runs').value = p.runs;
   save();
-  renderData();
-  renderBlocks();
-  if (fit.length < grid.length) toast(`Only the first ${LIMITS.runs} rows were kept.`, 'error');
-}
-
-function bindTable() {
-  const table = $('dataTable');
-  table.addEventListener('input', (e) => {
-    const cell = e.target.closest('.cell');
-    if (!cell) return;
-    plan().rows[+cell.dataset.r][+cell.dataset.c] = cell.value;
-    save();
-    updateRunCount();
-  });
-  table.addEventListener('paste', (e) => {
-    const cell = e.target.closest('.cell');
-    const text = e.clipboardData.getData('text/plain');
-    if (!cell || !/[\t\n]/.test(text.trim())) return;
-    e.preventDefault();
-    pasteGrid(parsePaste(text, plan().columns.length), +cell.dataset.r, +cell.dataset.c);
-  });
-  table.addEventListener('keydown', (e) => {
-    const cell = e.target.closest('.cell');
-    if (!cell || e.key !== 'Enter') return;
-    e.preventDefault();
-    const r = +cell.dataset.r + (e.shiftKey ? -1 : 1);
-    if (r < 0) return;
-    if (r >= plan().rows.length) addRow(+cell.dataset.c);
-    else focusCell(r, +cell.dataset.c);
-  });
-  $('addRowBtn').addEventListener('click', () => addRow());
-  $('pasteBtn').addEventListener('click', pasteDialog);
-  $('clearRowsBtn').addEventListener('click', async () => {
-    if (!plan().rows.length) return;
-    const ok = await modal({ title: 'Clear all rows?', message: 'Columns are kept; every row is removed.', confirm: 'Clear rows', danger: true });
-    if (!ok) return;
-    plan().rows = [];
-    save();
-    renderData();
-  });
-}
-
-function pasteDialog() {
-  const p = plan();
-  const dlg = $('modal');
-  const area = h('textarea', {
-    placeholder: p.columns.length > 1 ? `${p.columns.join(', ')}\nalice, alice@example.com` : 'alice\nbob\ncarol',
-    'aria-label': 'Data to paste',
-    spellcheck: 'false',
-    maxLength: LIMITS.data,
-  });
-  const replace = h('input', { type: 'checkbox', checked: true });
-  const close = () => dlg.close();
-  const form = h('form', {
-    method: 'dialog',
-    onsubmit: (e) => {
-      e.preventDefault();
-      let grid = parsePaste(area.value, p.columns.length);
-      // Skip a header row that repeats the column names.
-      if (grid.length && grid[0].join(',').toLowerCase() === p.columns.join(',').toLowerCase()) grid = grid.slice(1);
-      close();
-      if (!grid.length) return;
-      if (replace.checked) p.rows = [];
-      pasteGrid(grid, p.rows.length, 0);
-      toast(`Added ${grid.length} row${grid.length === 1 ? '' : 's'}.`, 'ok');
-    },
-  },
-  h('h3', {}, 'Paste data'),
-  h('p', {}, p.columns.length > 1
-    ? `One row per line. Separate the ${p.columns.length} values with tabs (copied from a spreadsheet) or commas, in column order: ${p.columns.join(', ')}.`
-    : 'One value per line, or a single line separated by commas. Copying from a spreadsheet works too.'),
-  area,
-  h('label', { class: 'check' }, replace, 'Replace existing rows'),
-  h('div', { class: 'modal-actions' },
-    h('button', { type: 'button', class: 'btn btn-ghost', onclick: close }, 'Cancel'),
-    h('button', { type: 'submit', class: 'btn btn-primary' }, 'Add rows')));
-  dlg.replaceChildren(form);
-  dlg.oncancel = null;
-  dlg.showModal();
-  area.focus();
+  updateRunCount();
 }
 
 function renderSettings() {
   const p = plan();
+  $('runs').value = p.runs;
+  $('whenShort').value = p.whenShort;
   $('stepDelay').value = p.stepDelay;
   $('runDelay').value = p.runDelay;
-  $('repeat').value = p.repeat;
   $('onError').value = p.onError;
+  updateRunCount();
 }
 
 function bindSettings() {
-  const nums = { stepDelay: [0, 60000], runDelay: [0, 600000], repeat: [1, LIMITS.runs] };
+  const nums = { stepDelay: [0, 60000], runDelay: [0, 600000] };
   for (const [key, [min, max]] of Object.entries(nums)) {
     $(key).addEventListener('change', (e) => {
       const n = Math.round(Number(e.target.value));
@@ -805,9 +704,15 @@ function bindSettings() {
       e.target.value = v;
       plan()[key] = v;
       save();
-      updateRunCount();
     });
   }
+  $('runs').addEventListener('change', (e) => setRuns(Number(e.target.value)));
+  $('quickRuns').addEventListener('click', (e) => {
+    const n = e.target.closest('button')?.dataset.runs;
+    if (n) setRuns(Number(n));
+  });
+  $('matchLongestBtn').addEventListener('click', (e) => setRuns(Number(e.target.dataset.runs)));
+  $('whenShort').addEventListener('change', (e) => { plan().whenShort = e.target.value; save(); });
   $('onError').addEventListener('change', (e) => { plan().onError = e.target.value; save(); });
 }
 
@@ -980,7 +885,7 @@ function finishRecording() {
   renderAll();
   refreshTab();
   if (rec.added) {
-    toast(`Recorded ${rec.added} step${rec.added === 1 ? '' : 's'}. Press {{ }} on a field to fill it from the Data table.`, 'ok', 4500);
+    toast(`Recorded ${rec.added} step${rec.added === 1 ? '' : 's'}. Use the Value dropdown on a step to give it a different value each run.`, 'ok', 4500);
   }
 }
 
@@ -1110,11 +1015,8 @@ async function init() {
 
   $('planMenuBtn').append(icon('more'));
   $('addBtn').append(icon('plus', 14), 'Add step');
-  $('runBtn').append(icon('play', 13), 'Run');
   $('stopBtn').append(icon('stop', 13), 'Stop');
-  $('addRowBtn').append(icon('plus', 13), 'Add row');
-  $('pasteBtn').append(icon('copy', 13), 'Paste…');
-  $('clearRowsBtn').append(icon('trash', 13), 'Clear');
+  $('addDatasetBtn').append(icon('plus', 14), 'Add data set');
   $('emptyRecordBtn').append(icon('record', 14), 'Start recording');
   $('privacyIcon').replaceWith(icon('shield'));
   buildAddMenu();
@@ -1153,7 +1055,7 @@ async function init() {
   });
 
   bindSettings();
-  bindTable();
+  bindData();
   setupDragAndDrop();
   watchTabs();
   window.addEventListener('pagehide', () => { stopRecording(); flushState(); });

@@ -1,62 +1,77 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseDataList, parsePaste, applyTemplate, templateBlock, runRows, columnRef,
+  splitValues, applyTemplate, templateBlock, planRuns, dataRef, usedDatasets,
   unknownPlaceholders, renameReferences, nameFromSelector,
 } from '../src/shared/data.js';
-import { sanitizePlan, newBlock, newPlan, validateBlock, cleanColumnName, uniqueColumnName, LIMITS } from '../src/shared/schema.js';
+import {
+  sanitizePlan, newBlock, newPlan, newDataset, validateBlock, cleanDataName, uniqueDataName, LIMITS,
+} from '../src/shared/schema.js';
 
-test('parseDataList auto-detects lines vs commas', () => {
-  assert.deepEqual(parseDataList('alice, bob ,carol'), ['alice', 'bob', 'carol']);
-  assert.deepEqual(parseDataList('Smith, John\nDoe, Jane\n'), ['Smith, John', 'Doe, Jane']);
-  assert.deepEqual(parseDataList('   '), []);
+const planWith = (datasets, blocks, extra = {}) => ({
+  ...newPlan(),
+  datasets: datasets.map(([name, text]) => newDataset(name, text)),
+  blocks,
+  ...extra,
+});
+const typeStep = (text) => ({ ...newBlock('type'), selector: '#f', text });
+
+test('splitValues auto-detects lines vs commas', () => {
+  assert.deepEqual(splitValues('alice, bob ,carol'), ['alice', 'bob', 'carol']);
+  assert.deepEqual(splitValues('Smith, John\nDoe, Jane\n'), ['Smith, John', 'Doe, Jane']);
+  assert.deepEqual(splitValues('a,b\nc', 'lines'), ['a,b', 'c']);
+  assert.deepEqual(splitValues('a,b\nc', 'comma'), ['a', 'b\nc']);
+  assert.deepEqual(splitValues('   '), []);
 });
 
-test('parsePaste handles spreadsheets, CSV and single-column lists', () => {
-  assert.deepEqual(parsePaste('alice\ta@x.com\nbob\tb@x.com\n', 2), [['alice', 'a@x.com'], ['bob', 'b@x.com']]);
-  assert.deepEqual(parsePaste('alice, a@x.com\r\nbob,b@x.com', 2), [['alice', 'a@x.com'], ['bob', 'b@x.com']]);
-  assert.deepEqual(parsePaste('alice, bob, carol', 1), [['alice'], ['bob'], ['carol']]);
-  assert.deepEqual(parsePaste('Smith, John\nDoe, Jane', 1), [['Smith, John'], ['Doe, Jane']]);
-  assert.deepEqual(parsePaste('a\t\n\t\nb\tc', 2), [['a', ''], ['b', 'c']], 'blank rows dropped');
-});
-
-test('applyTemplate fills named columns, legacy {{value}} and {{index}}', () => {
-  const row = { name: 'bob', email: 'b@x.com' };
-  assert.equal(applyTemplate('{{name}} <{{ email }}> #{{index}}', row, 2), 'bob <b@x.com> #3');
-  assert.equal(applyTemplate('{{value}}', row, 0, ['name', 'email']), 'bob', '{{value}} falls back to first column');
-  assert.equal(applyTemplate('{{other}}', row, 0), '{{other}}');
+test('applyTemplate fills data set values and {{index}}', () => {
+  const values = { name: 'bob', email: 'b@x.com' };
+  assert.equal(applyTemplate('{{name}} <{{ email }}> #{{index}}', values, 2), 'bob <b@x.com> #3');
+  assert.equal(applyTemplate('{{other}}', values, 0), '{{other}}');
   assert.equal(applyTemplate('{{name}}', { name: '$& $1' }, 0), '$& $1');
 });
 
 test('templateBlock only touches text fields and does not mutate', () => {
   const b = { ...newBlock('select'), selector: '#list-{{index}}', match: '{{city}}' };
-  const t = templateBlock(b, { city: 'Paris' }, 0, ['city']);
+  const t = templateBlock(b, { city: 'Paris' }, 0);
   assert.equal(t.selector, '#list-1');
   assert.equal(t.match, 'Paris');
   assert.equal(t.matchMode, 'exact');
   assert.equal(b.match, '{{city}}');
 });
 
-test('runRows skips empty rows and keys cells by column', () => {
-  const plan = { ...newPlan(), columns: ['name', 'email'], rows: [['a', 'a@x'], ['', ' '], ['b', '']] };
-  assert.deepEqual(runRows(plan), [{ name: 'a', email: 'a@x' }, { name: 'b', email: '' }]);
+test('planRuns gives each data set its own list, per run', () => {
+  const p = planWith([['names', 'alice\nbob\ncarol'], ['emails', 'a@x\nb@x']], [typeStep('{{names}}'), typeStep('{{emails}}')], { runs: 4 });
+  assert.deepEqual(planRuns(p), [
+    { names: 'alice', emails: 'a@x' },
+    { names: 'bob', emails: 'b@x' },
+    { names: 'carol', emails: 'a@x' },
+    { names: 'alice', emails: 'b@x' },
+  ], 'cycle starts each short list over');
+  assert.deepEqual(planRuns({ ...p, whenShort: 'empty' }).map((r) => r.emails), ['a@x', 'b@x', '', '']);
+  assert.equal(planRuns({ ...p, whenShort: 'stop' }).length, 2, 'stop ends at the shortest used set');
+  const unusedShort = planWith([['names', 'a\nb\nc'], ['unused', 'x']], [typeStep('{{names}}')], { runs: 3, whenShort: 'stop' });
+  assert.equal(planRuns(unusedShort).length, 3, 'unused sets do not shorten the job');
+  assert.equal(planRuns({ ...newPlan(), runs: 3 }).length, 3, 'runs without any data');
 });
 
-test('columnRef, unknownPlaceholders and renameReferences', () => {
-  assert.equal(columnRef(' {{ email }} '), 'email');
-  assert.equal(columnRef('Hi {{email}}'), null);
-  const plan = { ...newPlan(), columns: ['name'], blocks: [{ ...newBlock('type'), selector: '#a', text: '{{name}} {{email}} {{index}}' }] };
-  assert.deepEqual(unknownPlaceholders(plan), ['email']);
-  renameReferences(plan, 'name', 'full_name');
-  assert.equal(plan.blocks[0].text, '{{full_name}} {{email}} {{index}}');
+test('dataRef, usedDatasets, unknownPlaceholders, renameReferences', () => {
+  assert.equal(dataRef(' {{ email }} '), 'email');
+  assert.equal(dataRef('Hi {{email}}'), null);
+  const p = planWith([['name', 'a']], [typeStep('{{name}} {{email}} {{index}}')]);
+  assert.deepEqual([...usedDatasets(p)].sort(), ['email', 'name']);
+  assert.deepEqual(unknownPlaceholders(p), ['email']);
+  renameReferences(p, 'name', 'full_name');
+  assert.equal(p.blocks[0].text, '{{full_name}} {{email}} {{index}}');
 });
 
-test('column names are sanitized and made unique', () => {
-  assert.equal(cleanColumnName(' first name '), 'first_name');
-  assert.equal(cleanColumnName('9lives'), 'lives');
-  assert.equal(cleanColumnName('index'), '');
-  assert.equal(cleanColumnName('<script>'), '_script_');
-  assert.equal(uniqueColumnName('email', ['email', 'email2']), 'email3');
+test('data set names are sanitized and made unique', () => {
+  assert.equal(cleanDataName(' first name '), 'first_name');
+  assert.equal(cleanDataName('9lives'), 'lives');
+  assert.equal(cleanDataName('index'), '');
+  assert.equal(cleanDataName('<script>'), '_script_');
+  assert.equal(uniqueDataName('email', ['email', 'email2']), 'email3');
+  assert.equal(uniqueDataName('', []), 'list');
   assert.equal(nameFromSelector('#email'), 'email');
   assert.equal(nameFromSelector('input[name="user"]'), 'user');
   assert.equal(nameFromSelector('div > span:nth-of-type(2)'), '');
@@ -69,24 +84,36 @@ test('validateBlock reports missing required fields', () => {
   assert.match(validateBlock({ ...newBlock('wait'), mode: 'appear' }), /required/);
 });
 
-test('sanitizePlan migrates v1.0 data text into a one-column table', () => {
-  assert.deepEqual(sanitizePlan({ data: 'alice, bob' }).plan.rows, [['alice'], ['bob']]);
-  const { plan } = sanitizePlan({ data: 'Smith, John\nDoe, Jane', splitMode: 'auto' });
-  assert.deepEqual(plan.columns, ['value']);
-  assert.deepEqual(plan.rows, [['Smith, John'], ['Doe, Jane']]);
-  assert.equal(plan.data, undefined);
+test('sanitizePlan migrates older data formats', () => {
+  const v1 = sanitizePlan({ data: 'alice, bob', blocks: [{ type: 'type', selector: '#a', text: '{{value}}' }] }).plan;
+  assert.deepEqual(v1.datasets.map((d) => [d.name, d.text]), [['value', 'alice, bob']]);
+  assert.equal(v1.runs, 2, 'ran once per item');
+  assert.equal(v1.data, undefined);
+
+  const table = sanitizePlan({ columns: ['name', 'email'], rows: [['a', 'a@x'], ['b', ''], ['c', 'c@x']] }).plan;
+  assert.deepEqual(table.datasets.map((d) => [d.name, d.text]), [['name', 'a\nb\nc'], ['email', 'a@x\nc@x']]);
+  assert.equal(table.runs, 3);
+
+  assert.equal(sanitizePlan({ repeat: 7 }).plan.runs, 7, 'repeat becomes runs');
 });
 
-test('sanitizePlan cleans the table', () => {
+test('sanitizePlan cleans data sets and run settings', () => {
   const { plan } = sanitizePlan({
-    columns: ['name', 'name', 'bad name!', 42, 'index', ...Array(30).fill('x')],
-    rows: [['a', 'b', 'c', 'extra'], 'nope', [1, null]],
+    runs: 1e9,
+    whenShort: 'explode',
+    datasets: [
+      { name: 'names', text: 'a\nb', split: 'lines', evil: 1 },
+      { name: 'names', text: 'dup' },
+      { name: 'bad name!', text: 42 },
+      'nope',
+      ...Array.from({ length: 30 }, (_, i) => ({ name: `s${i}`, text: '' })),
+    ],
   });
-  assert.deepEqual(plan.columns.slice(0, 3), ['name', 'bad_name_', 'x']);
-  assert.ok(plan.columns.length <= LIMITS.columns);
-  assert.deepEqual(plan.rows[0], ['a', 'b', 'c']);
-  assert.deepEqual(plan.rows[1], ['', '', ''], 'non-string cells become empty');
-  assert.equal(plan.rows.length, 2);
+  assert.equal(plan.runs, LIMITS.runs);
+  assert.equal(plan.whenShort, 'cycle');
+  assert.deepEqual(plan.datasets.slice(0, 2).map((d) => [d.name, d.text, d.split]), [['names', 'a\nb', 'lines'], ['bad_name_', '', 'auto']]);
+  assert.equal(plan.datasets[0].evil, undefined);
+  assert.ok(plan.datasets.length <= LIMITS.datasets);
 });
 
 test('sanitizePlan rejects non-plans', () => {
@@ -102,7 +129,6 @@ test('sanitizePlan drops unknown types and keys, clamps values', () => {
       name: '<img src=x onerror=alert(1)>',
       evil: 'x',
       stepDelay: -50,
-      repeat: 1e9,
       onError: 'explode',
       blocks: [
         { type: 'click', selector: '#a', onclick: 'alert(1)', timeout: '999999999' },
@@ -116,20 +142,20 @@ test('sanitizePlan drops unknown types and keys, clamps values', () => {
   assert.equal(plan.evil, undefined);
   assert.equal(plan.name, '<img src=x onerror=alert(1)>', 'kept as inert text');
   assert.equal(plan.stepDelay, 0);
-  assert.equal(plan.repeat, LIMITS.runs);
   assert.equal(plan.onError, 'stop');
   assert.equal(plan.blocks.length, 2);
   assert.equal(plan.blocks[0].onclick, undefined);
   assert.equal(plan.blocks[0].timeout, 120000);
   assert.equal(plan.blocks[1].selector.length, LIMITS.selector);
-  assert.equal(plan.blocks[1].text, '{{value}}');
+  assert.equal(plan.blocks[1].text, '');
 });
 
 test('sanitizePlan caps block count and regenerates ids when fresh', () => {
   const blocks = Array.from({ length: LIMITS.blocks + 5 }, () => ({ type: 'wait', id: 'same-id' }));
-  const { plan, dropped } = sanitizePlan({ id: 'keep', blocks }, { fresh: true });
+  const { plan, dropped } = sanitizePlan({ id: 'keep', blocks, datasets: [{ id: 'ds-1', name: 'a' }] }, { fresh: true });
   assert.equal(plan.blocks.length, LIMITS.blocks);
   assert.equal(dropped, 5);
   assert.notEqual(plan.id, 'keep');
+  assert.notEqual(plan.datasets[0].id, 'ds-1');
   assert.equal(new Set(plan.blocks.map((b) => b.id)).size, LIMITS.blocks);
 });
