@@ -108,7 +108,7 @@ Vui lòng chỉ tự động hóa những trang web bạn được phép và tu�
 ClickFlow automates repetitive clicks and typing on web pages, using step plans that the user creates and starts manually.
 
 ## Assets
-- Icon: `icons/icon128.png`
+- Store icon: `store/store-icon-128.png` (96×96 artwork with 16 px transparent padding, per Google's image guidelines; `npm run icons`)
 - Small promo tile (440×280): `store/promo-small-440x280.png`
 - Screenshots (1280×800, 24-bit PNG, no alpha): `store/screenshot-1-record.png`, `store/screenshot-2-run.png`, `store/screenshot-3-picker.png`, `store/screenshot-4-rows.png`, `store/screenshot-5-vietnamese.png` (regenerate them with `npm run e2e`)
 - The promo tile is 24-bit PNG with no alpha, as the store requires (`npm run icons`)

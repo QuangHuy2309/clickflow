@@ -111,6 +111,16 @@ for (const size of [16, 32, 48, 128]) {
   writeFileSync(join(root, 'icons', `icon${size}.png`), png(size, size, render(size, size, iconSample)));
 }
 
+// Store icon: Google's guideline is 96×96 artwork centred in 128×128 with
+// 16 px of transparent padding on each side.
+{
+  const art = render(96, 96, iconSample);
+  const out = Buffer.alloc(128 * 128 * 4);
+  for (let y = 0; y < 96; y++) art.copy(out, ((y + 16) * 128 + 16) * 4, y * 96 * 4, (y + 1) * 96 * 4);
+  mkdirSync(join(root, 'store'), { recursive: true });
+  writeFileSync(join(root, 'store', 'store-icon-128.png'), png(128, 128, out));
+}
+
 // 440×280 promo tile: gradient background with the icon and a row of "step" chips.
 mkdirSync(join(root, 'store'), { recursive: true });
 const TW = 440, TH = 280;
