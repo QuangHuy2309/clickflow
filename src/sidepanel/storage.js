@@ -1,16 +1,23 @@
 // Plans persist only in chrome.storage.local on this device.
 
+import { LANGS, t } from '../shared/i18n.js';
 import { LIMITS, newPlan, sanitizePlan } from '../shared/schema.js';
 
 export async function loadState() {
-  const raw = await chrome.storage.local.get(['plans', 'currentPlanId']);
+  const raw = await chrome.storage.local.get(['plans', 'currentPlanId', 'lang']);
   const plans = [];
   for (const p of Array.isArray(raw.plans) ? raw.plans.slice(0, LIMITS.plans) : []) {
     try { plans.push(sanitizePlan(p).plan); } catch { /* skip corrupt entry */ }
   }
   if (!plans.length) plans.push(newPlan('My first plan'));
   const currentId = plans.some((p) => p.id === raw.currentPlanId) ? raw.currentPlanId : plans[0].id;
-  return { plans, currentId };
+  // Language: the saved choice, else Vietnamese for a Vietnamese Chrome.
+  const lang = Object.hasOwn(LANGS, raw.lang) ? raw.lang : (/^vi/i.test(chrome.i18n.getUILanguage()) ? 'vi' : 'en');
+  return { plans, currentId, lang };
+}
+
+export function saveLang(lang) {
+  chrome.storage.local.set({ lang });
 }
 
 let timer = null;
@@ -42,12 +49,12 @@ export function exportPlan(plan) {
 }
 
 export async function readImportFile(file) {
-  if (file.size > LIMITS.importBytes) throw new Error('That file is too large to be a ClickFlow plan.');
+  if (file.size > LIMITS.importBytes) throw new Error(t('That file is too large to be a ClickFlow plan.'));
   let data;
   try {
     data = JSON.parse(await file.text());
   } catch {
-    throw new Error('That file is not valid JSON.');
+    throw new Error(t('That file is not valid JSON.'));
   }
   return sanitizePlan(data, { fresh: true });
 }

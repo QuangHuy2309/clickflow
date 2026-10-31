@@ -7,12 +7,15 @@ A Chrome extension for automating repetitive clicks and typing on web pages. You
 ## Features
 
 - **Record** clicks (left, right, double), typing, dropdown choices, and scrolls (page or one section) as steps. Password and payment fields are never recorded.
-- **Steps as blocks:** Click, Type text, Select / find in list, Wait, Scroll, Screenshot. Drag, duplicate, disable, or delete them.
+- **Steps as blocks:** Click, Type text, Select / find in list, Wait, Scroll, Screenshot, For each row. Drag, duplicate, disable, or delete them.
+- **Then wait** on any step: pause 1 s to 59 min before the next step, with a live countdown.
+- **For each row:** in a list or table, click the same thing (e.g. the name link) in every row whose cell passes a rule (equals, greater than, contains…) or whose checkbox is ticked. Links open in background tabs, and ClickFlow scrolls to load more rows.
 - **Data sets:** a named list of values per field. Run *n* uses value *n*, and ClickFlow counts the runs for you, or you set a fixed number.
 - **Survives page changes:** stable selectors from the element picker, text fallback for clicks, waits for visible elements, retries.
 - **Live log** with each step's values, timing, errors, and screenshots. Drag its top edge to resize it.
 - **Fast, with instant control:** about 50 ms per step, no waiting for slow images or ads. Pause, Stop, and Esc act immediately.
 - **Debug:** run one step, preview what a selector matches, undo a delete.
+- **English and Vietnamese** (Settings → Language).
 - Multiple plans with JSON import and export. Light and dark themes, keyboard accessible, no dependencies.
 
 ## Install (development)
@@ -53,8 +56,9 @@ npm run icons       # regenerate icons/ and the store promo tile
 manifest.json            MV3 manifest
 src/background.js        opens the side panel on toolbar click
 src/sidepanel/           UI (index.html, panel.css, panel.js), runner, storage, site access
-src/shared/              plan schema + sanitizer, data-list parsing and templating
-src/content/actions.js   step executor, injected only while a plan runs
+src/shared/              plan schema + sanitizer, data-list parsing and templating, i18n (en, vi)
+_locales/                extension name and description in English and Vietnamese
+src/content/actions.js   step executor (incl. For each row), injected only while a plan runs
 src/content/picker.js    element picker, injected only when you click Pick
 src/content/recorder.js  action recorder, injected only while you record
 src/content/selector.js  shared stable-selector builder

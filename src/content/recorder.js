@@ -31,7 +31,7 @@
 
   // ---- On-page UI ----
 
-  function buildUi() {
+  function buildUi(text) {
     const host = document.createElement('clickflow-recorder');
     host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
     const root = host.attachShadow({ mode: 'closed' });
@@ -49,7 +49,7 @@
     const dot = document.createElement('span');
     dot.className = 'dot';
     const label = document.createElement('span');
-    label.textContent = 'ClickFlow is recording your actions';
+    label.textContent = text || 'ClickFlow is recording your actions';
     bar.append(dot, label);
     root.append(style, bar);
     document.documentElement.append(host);
@@ -336,10 +336,10 @@
   ];
   const PASSIVE = new Set(['scroll', 'wheel', 'touchstart']);
 
-  function start(id) {
+  function start(id, text) {
     stop();
     session = {
-      id, typing: new Map(), lastClick: null, pressed: null, enterCandidate: null, ui: buildUi(),
+      id, typing: new Map(), lastClick: null, pressed: null, enterCandidate: null, ui: buildUi(text),
       scrolls: new Map(), positions: new Map(), userScrollUntil: 0, unclaimed: null,
     };
     session.positions.set(pageScroller(), window.scrollY);

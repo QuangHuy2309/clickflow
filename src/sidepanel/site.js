@@ -1,6 +1,8 @@
 // Works out whether ClickFlow may run on a tab, and which origin to ask for.
 // Host access is optional and granted one site at a time.
 
+import { t } from '../shared/i18n.js';
+
 const RESTRICTED = [
   /^(chrome|edge|brave|opera|vivaldi|about|devtools|view-source|chrome-search|chrome-untrusted|chrome-extension|data|blob|javascript):/i,
   /^https:\/\/chromewebstore\.google\.com\//i,
@@ -21,7 +23,7 @@ export async function getAccess(tab) {
   if (u.protocol === 'file:') {
     if (!(await chrome.extension.isAllowedFileSchemeAccess())) return { kind: 'file-blocked' };
     pattern = 'file:///*';
-    host = 'local files';
+    host = t('local files');
   } else if (u.protocol === 'http:' || u.protocol === 'https:') {
     pattern = `${u.protocol}//${u.hostname}/*`;
     host = u.hostname;
@@ -34,9 +36,9 @@ export async function getAccess(tab) {
 
 export function friendlyError(message = '') {
   if (/cannot access|cannot be scripted|missing host permission|permission/i.test(message)) {
-    return "ClickFlow doesn't have access to this page. Allow it on this site and try again.";
+    return t('ClickFlow doesn’t have access to this page. Allow it on this site and try again.');
   }
-  if (/no tab with id|tab was closed/i.test(message)) return 'The tab was closed.';
-  if (/frame.*removed|navigat/i.test(message)) return 'The page navigated away during this step.';
-  return message || 'Something went wrong.';
+  if (/no tab with id|tab was closed/i.test(message)) return t('The tab was closed.');
+  if (/frame.*removed|navigat/i.test(message)) return t('The page navigated away during this step.');
+  return message || t('Something went wrong.');
 }

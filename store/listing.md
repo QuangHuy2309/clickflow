@@ -10,7 +10,7 @@ Automate repetitive clicks and typing on web pages with step-by-step plans you b
 Workflow & Planning (Productivity)
 
 ## Language
-English
+English, Vietnamese (the extension name and description are localized in _locales/, and the panel has a language switch)
 
 ## Description
 
@@ -25,6 +25,9 @@ OR BUILD A PLAN FROM SIMPLE STEPS
 • Select / find in list: pick an option from a dropdown, or scroll a long list until it finds your value
 • Wait: for a set time, or until something appears or disappears
 • Scroll: the page or any scrollable area
+• For each row: in a list or table, click the same link or button in every row that matches a rule (a cell equals, is greater than, or contains a value, or the row is ticked), opening links in background tabs
+
+Any step can wait afterwards (up to 59 minutes) before the next one starts.
 
 Drag steps to reorder them, duplicate or disable them, and delete what you don't need.
 
@@ -35,6 +38,7 @@ MORE THAN CLICKS
 • Right-click (custom context menus) and double-click
 • Screenshot steps that capture the page or a single element, ready to download
 • A live activity log showing each step, its values, and its timing
+• English and Vietnamese interface
 • Automatic retries and a text-based backup when a site changes its layout
 
 POINT AND CLICK, NO CODE NEEDED

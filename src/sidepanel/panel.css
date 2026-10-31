@@ -31,6 +31,7 @@
   --c-select: #f59e0b;
   --c-wait: #a855f7;
   --c-scroll: #ec4899;
+  --c-rows: #10b981;
   color-scheme: light;
 }
 
@@ -355,6 +356,7 @@ main.locked .add-wrap, main.locked #panel-data, main.locked #panel-settings { op
 .block.t-select { --tc: var(--c-select); }
 .block.t-wait { --tc: var(--c-wait); }
 .block.t-scroll { --tc: var(--c-scroll); }
+.block.t-rows { --tc: var(--c-rows); }
 .block:not(:last-child)::before {
   content: "";
   position: absolute;
@@ -437,6 +439,7 @@ main.locked .add-wrap, main.locked #panel-data, main.locked #panel-settings { op
 .add-menu .t-select { --tc: var(--c-select); }
 .add-menu .t-wait { --tc: var(--c-wait); }
 .add-menu .t-scroll { --tc: var(--c-scroll); }
+.add-menu .t-rows { --tc: var(--c-rows); }
 
 .block-title {
   flex: 1;
@@ -840,3 +843,13 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 .coffee summary { cursor: pointer; font-weight: 600; color: var(--accent); width: fit-content; }
 .coffee p { margin: 8px 0; }
 .coffee img { display: block; margin: 0 auto; border-radius: 10px; background: #fff; height: auto; }
+
+/* Checkbox fields with a hint under the label */
+.check { flex-wrap: wrap; }
+.check-hint { flex-basis: 100%; padding-left: 23px; margin-top: -4px; color: var(--muted); font-size: 11px; }
+
+/* "Then wait" on every step */
+.wait-after { border-top: 1px dashed var(--border); padding-top: 10px; }
+.wait-after .input-group .wait-amount { width: 90px; flex: none; }
+.wait-after .input-group .wait-unit { width: auto; flex: 1; min-width: 0; }
+.log-item.row { opacity: .9; }

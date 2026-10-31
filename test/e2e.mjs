@@ -20,7 +20,7 @@ const out = join(root, 'test-results');
 
 rmSync(work, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-for (const p of ['manifest.json', 'src', 'icons']) cpSync(join(root, p), join(ext, p), { recursive: true });
+for (const p of ['manifest.json', '_locales', 'src', 'icons']) cpSync(join(root, p), join(ext, p), { recursive: true });
 const manifest = JSON.parse(readFileSync(join(ext, 'manifest.json'), 'utf8'));
 // Screenshot steps need all-sites access (Chrome's rule for captureVisibleTab);
 // pre-grant it here too, since the prompt can't be clicked headlessly.
@@ -28,7 +28,7 @@ manifest.host_permissions = ['http://127.0.0.1/*', '<all_urls>'];
 writeFileSync(join(ext, 'manifest.json'), JSON.stringify(manifest));
 
 // Serves only the known test pages (no path traversal).
-const PAGES = new Set(['playground.html', 'search.html', 'results.html', 'article.html', 'slow.html']);
+const PAGES = new Set(['playground.html', 'search.html', 'results.html', 'article.html', 'slow.html', 'rows.html']);
 // slow.png is held for 10 s, like a slow ad or tracker that delays "load".
 const held = new Set();
 const server = createServer((req, res) => {
@@ -88,6 +88,8 @@ try {
     await tab.click('#addBtn');
     await tab.click('#addMenu button:has-text("Wait")');
     const tabCards = tab.locator('#blockList > li');
+    // Collapsed, both cards fit on screen (native drags can't scroll).
+    for (let i = 0; i < 2; i++) await tabCards.nth(i).locator('.block-title').dispatchEvent('click');
     await tabCards.last().locator('.grip').dragTo(tabCards.first(), { targetPosition: { x: 80, y: 4 } });
     assert.equal(await tabCards.first().locator('.block-title strong').textContent(), 'Wait', 'drag moved Wait to top');
     ok('drag-and-drop reorder');
@@ -258,7 +260,7 @@ try {
 
   // ---- A missing element fails with a readable error on that step.
   await cards.last().locator('.block-title strong').click();
-  await cards.last().locator('.input-group input').fill('#does-not-exist');
+  await cards.last().locator('.input-group input.mono').fill('#does-not-exist');
   // Clear the recorded text backup ("Submit"), or the step would still succeed.
   await cards.last().locator('.field', { hasText: 'If not found' }).locator('input').fill('');
   await panel.click('#tab-settings');
@@ -283,7 +285,7 @@ try {
   await site.mouse.move(box.x + 5, box.y + 5);
   await site.screenshot({ path: join(out, 'picker.png') });
   await site.mouse.click(box.x + 5, box.y + 5);
-  await waitUntil(panel, () => document.querySelector('#blockList > li.block:last-child .input-group input')?.value === '#bump');
+  await waitUntil(panel, () => document.querySelector('#blockList > li.block:last-child .input-group input.mono')?.value === '#bump');
   assert.equal(await site.textContent('#counter'), countBefore, 'picker click must not reach the page');
   ok('element picker filled "#bump" without triggering the page');
 
@@ -701,6 +703,119 @@ try {
     await panel.dblclick('#logResize');
     assert.equal(Math.round((await box('#logPanel')).height), Math.round(before.height), 'double-click resets');
     ok('log docked under the steps: divider/header drag and keyboard resize both, remembered, double-click resets');
+  }
+
+  // ================= Then wait, For each row, language =================
+
+  // ---- "Then wait" after a step: holds the next step, counts down, and is
+  // capped below an hour (59 minutes).
+  {
+    await importPlan({ name: 'Then wait', stepDelay: 0, blocks: [
+      { type: 'click', selector: '#bump', waitAfter: 1, waitUnit: 's' },
+      { type: 'click', selector: '#bump' },
+    ] });
+    assert.match(await cards.nth(0).locator('.summary').textContent(), /then wait 1 s$/);
+    const unit = cards.nth(0).locator('.wait-unit');
+    const cardBox = await cards.nth(0).locator('.step-card').boundingBox();
+    const unitBox = await unit.boundingBox();
+    assert.ok(unitBox.x + unitBox.width <= cardBox.x + cardBox.width, 'the unit dropdown fits inside the step card');
+    await unit.selectOption('m');
+    await cards.nth(0).locator('.wait-amount').fill('90');
+    await cards.nth(0).locator('.wait-amount').dispatchEvent('change');
+    assert.equal(await cards.nth(0).locator('.wait-amount').inputValue(), '59', 'minutes are capped at 59');
+    await unit.selectOption('s');
+    await cards.nth(0).locator('.wait-amount').fill('1');
+    await cards.nth(0).locator('.wait-amount').dispatchEvent('change');
+    await openSite('playground.html');
+    const before = Number(await site.textContent('#counter'));
+    await panel.evaluate(() => { document.getElementById('runStatus').textContent = ''; });
+    const t0 = Date.now();
+    await panel.click('#runBtn');
+    await waitUntil(panel, () => /waiting \d+ s/.test(document.getElementById('runStatus').textContent), 3000);
+    assert.equal(Number(await site.textContent('#counter')) - before, 1, 'second click waits');
+    await waitUntil(panel, () => /^Done/.test(document.getElementById('runStatus').textContent), 5000);
+    const elapsed = Date.now() - t0;
+    assert.equal(Number(await site.textContent('#counter')) - before, 2);
+    assert.ok(elapsed >= 1000, `waited ${elapsed} ms`);
+    ok(`then wait: next step ran after the 1 s wait (${elapsed} ms), minutes capped at 59`);
+  }
+
+  // ---- For each row: open the name link of every row whose 3rd number is
+  // above 0, in background tabs, scrolling to load more rows.
+  {
+    // Background tabs may not load in headless Chromium, so read the URLs
+    // Chrome was asked to open (pendingUrl) from the extension itself.
+    const profileTabs = async () => {
+      const tabs = await sw.evaluate(() => chrome.tabs.query({}).then((ts) => ts.map((x) => ({ id: x.id, url: x.pendingUrl || x.url }))));
+      return tabs.filter((x) => /profile.html/.test(x.url));
+    };
+    const closeProfileTabs = async () => {
+      const ids = (await profileTabs()).map((x) => x.id);
+      if (ids.length) await sw.evaluate((list) => chrome.tabs.remove(list), ids);
+    };
+    const openedIds = async (expect) => {
+      for (let i = 0; i < 20 && (await profileTabs()).length < expect; i++) await panel.waitForTimeout(100);
+      const ids = (await profileTabs()).map((x) => new URL(x.url).searchParams.get('id'));
+      await closeProfileTabs();
+      return ids;
+    };
+    const rowsRun = async (block, expectTabs) => {
+      await importPlan({ name: 'Rows', stepDelay: 0, timeout: 3000, blocks: [{ type: 'rows', gap: 0, max: 10, ...block }] });
+      await openSite('rows.html');
+      await site.bringToFront();
+      await panel.click('#logClear');
+      const status = await runAndWait();
+      return { status, urls: await openedIds(expectTabs), log: await panel.locator('#logList .log-item').allTextContents() };
+    };
+
+    let r = await rowsRun({ target: '#r1 a', cell: '#r1 .c3', op: 'gt', value: '0' }, 4);
+    assert.match(r.status, /^Done/, r.log.join(' | '));
+    assert.deepEqual(r.urls.sort(), ['1003', '1006', '1015', '1024'], `opened rows with score > 0 (incl. lazy-loaded): ${r.urls}`);
+    assert.ok(r.log.some((l) => /Row 4: opened “Person 24” in a new tab/.test(l)), 'each row is logged');
+    assert.ok(r.log.some((l) => /4 rows handled/.test(l)));
+    ok('for each row: opened only rows with score > 0, including rows loaded by scrolling:', r.urls);
+
+    // Only ticked rows (ticked on the page beforehand), every row otherwise.
+    await importPlan({ name: 'Rows ticked', stepDelay: 0, timeout: 3000, blocks: [{ type: 'rows', gap: 0, max: 10, target: '#r1 a', onlyTicked: true }] });
+    await openSite('rows.html');
+    await site.evaluate(() => { for (const i of [2, 5]) document.querySelector(`#r${i} input`).checked = true; });
+    assert.match(await runAndWait(), /^Done/);
+    assert.deepEqual((await openedIds(2)).sort(), ['1002', '1005']);
+    ok('for each row: only ticked rows');
+
+    // Click in the row itself (a checkbox), up to a limit.
+    r = await rowsRun({ target: '#r1 input', cell: '#r1 .c1', op: 'gt', value: '0', max: 3 }, 0);
+    assert.match(r.status, /^Done/);
+    const ticked = await site.evaluate(() => [...document.querySelectorAll('#list input:checked')].map((b) => b.closest('.row').id));
+    assert.deepEqual(ticked, ['r4', 'r8', 'r12'], 'ticked the first 3 rows with column 1 above 0');
+    assert.deepEqual(r.urls, [], 'no tabs for non-link targets');
+    ok('for each row: clicked a checkbox in matching rows, stopped at the limit:', ticked);
+
+    // Equals, with a thousands separator on the page ("1,250").
+    r = await rowsRun({ target: '#r1 a', cell: '#r1 .c3', op: 'eq', value: '1250' }, 1);
+    assert.deepEqual(r.urls, ['1006'], '"1,250" equals 1250');
+    ok('for each row: number compare reads "1,250" as 1250');
+  }
+
+  // ---- Language: English ⇄ Vietnamese, remembered.
+  {
+    await panel.click('#tab-settings');
+    await panel.click('#langSelect [data-value="vi"]');
+    assert.match(await panel.textContent('#tab-steps'), /^Các bước/);
+    assert.equal(await panel.getAttribute('html', 'lang'), 'vi');
+    assert.match(await panel.textContent('#runBtn'), /^Chạy/);
+    await panel.click('#tab-steps');
+    assert.match(await cards.nth(0).locator('.block-title strong').textContent(), /^Với mỗi hàng$/);
+    assert.match(await cards.nth(0).locator('.wait-after label').textContent(), /^Sau đó chờ$/);
+    await panel.screenshot({ path: join(out, 'panel-vi.png') });
+    await panel.reload();
+    await panel.waitForSelector('#runBtn svg');
+    assert.match(await panel.textContent('#tab-steps'), /^Các bước/, 'remembered after reload');
+    await panel.click('#tab-settings');
+    await panel.click('#langSelect [data-value="en"]');
+    assert.match(await panel.textContent('#tab-steps'), /^Steps/);
+    await panel.click('#tab-steps');
+    ok('language: switched to Vietnamese and back, remembered across reloads');
   }
 
   // ---- Restricted pages are refused. Without the "tabs" permission Chrome

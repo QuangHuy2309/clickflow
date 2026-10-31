@@ -5,7 +5,7 @@ import {
   unknownPlaceholders, renameReferences, nameFromSelector,
 } from '../src/shared/data.js';
 import {
-  sanitizePlan, newBlock, newPlan, newDataset, validateBlock, cleanDataName, uniqueDataName, LIMITS,
+  sanitizePlan, sanitizeBlock, newBlock, newPlan, newDataset, validateBlock, cleanDataName, uniqueDataName, LIMITS, waitAfterMs,
 } from '../src/shared/schema.js';
 
 const planWith = (datasets, blocks, extra = {}) => ({
@@ -186,4 +186,31 @@ test('sanitizePlan: one shared element timeout, migrated from old per-step timeo
   assert.equal(old.timeout, 3000, 'the value most steps used');
   assert.equal(sanitizePlan({ blocks: [{ type: 'click', selector: '#a', timeout: 2000 }, { type: 'click', selector: '#b', timeout: 9000 }] }).plan.timeout, 9000, 'tie: the longer one');
   assert.equal(sanitizePlan({ timeout: 1 }).plan.timeout, LIMITS.timeout[0], 'clamped');
+});
+
+test('"Then wait" on any step: seconds or minutes, always under an hour', () => {
+  const b = newBlock('click');
+  assert.equal(b.waitAfter, 0);
+  assert.equal(b.waitUnit, 's');
+  assert.equal(waitAfterMs(sanitizeBlock({ ...b, waitAfter: 30 })), 30000);
+  assert.equal(waitAfterMs(sanitizeBlock({ ...b, waitAfter: 5, waitUnit: 'm' })), 300000);
+  assert.equal(sanitizeBlock({ ...b, waitAfter: 90, waitUnit: 'm' }).waitAfter, 59, 'minutes capped at 59');
+  assert.equal(sanitizeBlock({ ...b, waitAfter: 99999 }).waitAfter, 3599, 'seconds capped at 3599');
+  assert.equal(sanitizeBlock({ ...b, waitAfter: -5 }).waitAfter, 0);
+  assert.equal(sanitizeBlock({ ...b, waitUnit: 'h', waitAfter: 2 }).waitUnit, 's', 'unknown unit falls back to seconds');
+  // Older plans have no wait.
+  const { plan } = sanitizePlan({ blocks: [{ type: 'click', selector: '#a' }] });
+  assert.equal(waitAfterMs(plan.blocks[0]), 0);
+});
+
+test('For each row: the cell is required only when there is a rule', () => {
+  const b = { ...newBlock('rows'), target: '#r1 a' };
+  assert.equal(validateBlock(b), null, 'every row: no cell needed');
+  assert.match(validateBlock({ ...b, op: 'gt' }), /Cell to check/);
+  assert.equal(validateBlock({ ...b, op: 'gt', cell: '#r1 .c3' }), null);
+  assert.match(validateBlock({ ...b, target: '' }), /Click this in each row/);
+  const clean = sanitizeBlock({ ...b, op: 'hack', max: 1e9, newTab: 'yes' });
+  assert.equal(clean.op, 'any');
+  assert.equal(clean.max, 500);
+  assert.equal(clean.newTab, true, 'non-boolean falls back to the default');
 });

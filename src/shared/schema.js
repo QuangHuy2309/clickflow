@@ -1,5 +1,8 @@
 // Plan and block definitions, defaults, and strict sanitizing of untrusted input
 // (saved state and imported files both pass through sanitizePlan).
+// Labels here are English; the panel shows them through t().
+
+import { t } from './i18n.js';
 
 export const LIMITS = {
   blocks: 200,
@@ -96,7 +99,47 @@ export const BLOCK_TYPES = {
       text('name', 'File name', 'screenshot-{{index}}', { hint: '{{index}} = run number; data sets work too' }),
     ],
   },
+  // One click in every row of a list or table that passes the rule, e.g. open
+  // each person whose 3rd column is above 0. Rows further down are reached
+  // by scrolling, which also loads more rows on lazy lists.
+  rows: {
+    label: 'For each row',
+    fields: [
+      selector('target', 'Click this in each row', {
+        required: true,
+        hint: 'Pick it in any one row (e.g. the name link). ClickFlow finds the same thing in the other rows.',
+      }),
+      bool('newTab', 'Open links in a new tab', true, { hint: 'Keeps the list open, so the next row is still there' }),
+      choice('op', 'Which rows', [
+        { value: 'any', label: 'Every row' },
+        { value: 'eq', label: 'Cell equals' },
+        { value: 'ne', label: 'Cell does not equal' },
+        { value: 'gt', label: 'Cell is greater than' },
+        { value: 'lt', label: 'Cell is less than' },
+        { value: 'contains', label: 'Cell contains' },
+      ], 'any'),
+      selector('cell', 'Cell to check', {
+        show: (b) => b.op !== 'any',
+        required: (b) => b.op !== 'any',
+        hint: 'Pick the cell in the same row as the element above',
+      }),
+      text('value', 'Value', '0', { show: (b) => b.op !== 'any', variable: true, maxLen: 200 }),
+      bool('onlyTicked', 'Only rows whose checkbox is ticked', false),
+      selector('checkbox', 'Checkbox (optional)', {
+        show: (b) => b.onlyTicked,
+        hint: 'Leave empty to use the first checkbox in each row',
+      }),
+      number('max', 'At most this many rows', 10, 1, 500),
+      number('gap', 'Wait between rows (ms)', 1000, 0, 600000),
+      selector('row', 'Row (optional)', { hint: 'Leave empty to find the rows automatically' }),
+    ],
+  },
 };
+
+// "Then wait" after any step: a number of seconds or minutes, under an hour.
+export const WAIT_UNITS = { s: 1000, m: 60000 };
+export const waitMax = (unit) => (unit === 'm' ? 59 : 3599);
+export const waitAfterMs = (b) => (b.waitAfter || 0) * (WAIT_UNITS[b.waitUnit] || 1000);
 
 export const PLAN_FIELDS = {
   onError: ['stop', 'skip'],
@@ -133,7 +176,7 @@ export function newId() {
 export function newBlock(type) {
   const def = BLOCK_TYPES[type];
   if (!def) throw new Error(`Unknown step type: ${type}`);
-  const block = { id: newId(), type, enabled: true, collapsed: false, note: '' };
+  const block = { id: newId(), type, enabled: true, collapsed: false, note: '', waitAfter: 0, waitUnit: 's' };
   for (const f of def.fields) block[f.key] = f.default;
   return block;
 }
@@ -161,9 +204,9 @@ export const isShown = (f, b) => !f.show || f.show(b);
 // Returns a human-readable problem with the block, or null when it can run.
 export function validateBlock(b) {
   const def = BLOCK_TYPES[b.type];
-  if (!def) return 'Unknown step type.';
+  if (!def) return t('Unknown step type.');
   for (const f of def.fields) {
-    if (isShown(f, b) && isRequired(f, b) && !String(b[f.key] ?? '').trim()) return `"${f.label}" is required.`;
+    if (isShown(f, b) && isRequired(f, b) && !String(b[f.key] ?? '').trim()) return t('"{field}" is required.', { field: t(f.label) });
   }
   return null;
 }
@@ -194,7 +237,9 @@ export function sanitizeBlock(raw) {
     enabled: raw.enabled !== false,
     collapsed: raw.collapsed === true,
     note: cleanString(raw.note, LIMITS.note),
+    waitUnit: cleanEnum(raw.waitUnit, Object.keys(WAIT_UNITS), 's'),
   };
+  block.waitAfter = cleanNumber(raw.waitAfter, 0, waitMax(block.waitUnit), 0);
   for (const f of def.fields) {
     const v = raw[f.key];
     switch (f.kind) {
@@ -279,8 +324,8 @@ function legacyTimeout(rawBlocks) {
 // `fresh` regenerates every id so an import never collides with saved data.
 export function sanitizePlan(raw, { fresh = false } = {}) {
   if (raw && typeof raw === 'object' && raw.format === 'clickflow-plan') raw = raw.plan;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('This is not a ClickFlow plan.');
-  if (raw.blocks !== undefined && !Array.isArray(raw.blocks)) throw new Error('This plan has an invalid step list.');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(t('This is not a ClickFlow plan.'));
+  if (raw.blocks !== undefined && !Array.isArray(raw.blocks)) throw new Error(t('This plan has an invalid step list.'));
 
   const base = newPlan();
   const rawBlocks = raw.blocks || [];
