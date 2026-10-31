@@ -1,6 +1,6 @@
 // Data sets → per-run values, and {{name}} templating.
 
-import { BLOCK_TYPES, LIMITS, splitValues } from './schema.js';
+import { BLOCK_TYPES, LIMITS, allSteps, splitValues } from './schema.js';
 
 const PLACEHOLDER_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 
@@ -34,9 +34,10 @@ export function dataRef(str) {
   return m ? m[1] : null;
 }
 
+// Steps inside a row loop count only if the loop itself is enabled too.
 function eachTextField(plan, fn, { enabledOnly = false } = {}) {
-  for (const b of plan.blocks) {
-    if (enabledOnly && !b.enabled) continue;
+  const steps = enabledOnly ? plan.blocks.filter((b) => b.enabled).flatMap((b) => [b, ...(b.steps || []).filter((x) => x.enabled)]) : allSteps(plan.blocks);
+  for (const b of steps) {
     for (const f of BLOCK_TYPES[b.type].fields) if (typeof b[f.key] === 'string') fn(b, f);
   }
 }

@@ -82,12 +82,17 @@ export class Runner {
     if (!blocks.length) throw new Error(t('Add at least one enabled step first.'));
     const timeout = plan.timeout || 5000;
     for (const b of blocks) {
-      const problem = validateBlock(b);
-      if (problem) {
-        this.hooks.onStepError?.(b.id, problem);
-        throw new Error(t('Step {n} ({type}): {problem}', { n: plan.blocks.indexOf(b) + 1, type: t(BLOCK_TYPES[b.type].label), problem }));
+      const n = plan.blocks.indexOf(b) + 1;
+      for (const [x, no] of [[b, n], ...(b.steps || []).map((x, i) => [x, `${n}.${i + 1}`]).filter(([x]) => x.enabled)]) {
+        const problem = validateBlock(x);
+        if (problem) {
+          this.hooks.onStepError?.(x.id, problem);
+          throw new Error(t('Step {n} ({type}): {problem}', { n: no, type: t(BLOCK_TYPES[x.type].label), problem }));
+        }
       }
     }
+    this._plan = plan;
+    this._opened = 0;
     const missing = unknownPlaceholders(plan);
     if (missing.length) throw new Error(t('No data set named {names}. Add it in the Data tab.', { names: missing.map((m) => `“${m}”`).join(', ') }));
     const values = planRuns(plan);
@@ -111,32 +116,17 @@ export class Runner {
           if (!(await this._checkpoint())) break outer;
           const block = blocks[s];
           const step = { ...templateBlock(block, values[r], r), timeout };
+          // Steps inside a row loop get this run's values too.
+          if (block.steps) step.steps = block.steps.filter((x) => x.enabled).map((x) => ({ ...templateBlock(x, values[r], r), timeout }));
           const info = { run: r, runs: values.length, step: s, steps: blocks.length, blockId: block.id };
-          this.hooks.onProgress?.(info);
-          const t0 = performance.now();
-          const paused0 = this._pausedMs;
-          const label = t('ClickFlow · {step} · Esc to stop', {
-            step: `${t('Run {run}/{runs} · Step {step}/{steps}', { run: r + 1, runs: values.length, step: s + 1, steps: blocks.length })} · ${t(BLOCK_TYPES[block.type].label)}`,
-          });
-          let res = await this._execute(step, label, info);
-          // A retry changes something: it waits twice as long for the element.
-          for (let attempt = 1; !res.ok && !res.noRetry && !this._stopped && attempt <= (plan.retries || 0); attempt++) {
-            this.hooks.onRetry?.({ ...info, block: step, attempt, error: res.error });
-            res = await this._execute({ ...step, timeout: Math.min(timeout * 2 ** attempt, 240000) }, label, info);
-          }
+          const res = await this._runStep(step, info);
           if (this._stopped) break outer;
-          // Time spent paused isn't the step's fault, so it isn't counted.
-          const ms = Math.round(performance.now() - t0 - (this._pausedMs - paused0));
-          this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms, loadMs: res.loadMs, rows: res.rows });
           if (!res.ok) {
             failed = true;
             summary.failed++;
-            this.hooks.onStepError?.(block.id, res.error, r);
             if (plan.onError === 'stop') break outer;
             break;
           }
-          const wait = waitAfterMs(block);
-          if (wait) await this._countdown(wait, info);
           if (s < blocks.length - 1) await this._sleep(plan.stepDelay);
         }
         if (!failed) summary.ok++;
@@ -152,6 +142,34 @@ export class Runner {
       this._emitStatus();
       this.hooks.onDone?.(summary);
     }
+  }
+
+  // One step: run it (retrying with a longer wait), log it, then its "Then
+  // wait". `info.row` / `info.sub` mark a step inside a row loop.
+  async _runStep(step, info) {
+    this.hooks.onProgress?.(info);
+    const t0 = performance.now();
+    const paused0 = this._pausedMs;
+    const where = t('Run {run}/{runs} · Step {step}/{steps}', { run: info.run + 1, runs: info.runs, step: info.step + 1, steps: info.steps });
+    const row = info.row ? ` · ${t('Row {n}', { n: info.row })}` : '';
+    const label = t('ClickFlow · {step} · Esc to stop', { step: `${where}${row} · ${t(BLOCK_TYPES[step.type].label)}` });
+    let res = await this._execute(step, label, info);
+    // A retry changes something: it waits twice as long for the element.
+    for (let attempt = 1; !res.ok && !res.noRetry && !this._stopped && attempt <= (this._plan.retries || 0); attempt++) {
+      this.hooks.onRetry?.({ ...info, block: step, attempt, error: res.error });
+      res = await this._execute({ ...step, timeout: Math.min(step.timeout * 2 ** attempt, 240000) }, label, info);
+    }
+    if (this._stopped) return res;
+    // Time spent paused isn't the step's fault, so it isn't counted.
+    const ms = Math.round(performance.now() - t0 - (this._pausedMs - paused0));
+    if (!res.inner) this.hooks.onStepDone?.({ ...info, block: step, ok: res.ok, error: res.error, ms, loadMs: res.loadMs, rows: res.rows, opened: res.opened });
+    if (!res.ok) {
+      this.hooks.onStepError?.(info.blockId, res.error, info.run);
+      return res;
+    }
+    const wait = waitAfterMs(step);
+    if (wait) await this._countdown(wait, info);
+    return res;
   }
 
   // Pause takes effect at once: the current step's element wait freezes
@@ -295,6 +313,10 @@ export class Runner {
           target: { tabId: this.tabId }, world: 'MAIN', injectImmediately: true, func: pressEnterInPage, args: [block.selector],
         }), CALL_SLACK_MS).catch((e) => { if (e instanceof Stopped) throw e; });
       }
+      if (result.ok && result.href) {
+        await this._openTab(result.href);
+        return { ...result, opened: true };
+      }
       // Only steps that can trigger a navigation pay for the navigation check.
       const canNavigate = block.type === 'click' || block.type === 'select' || (block.type === 'type' && block.enter);
       if (canNavigate) result.loadMs = await this._settle(result.doc);
@@ -375,36 +397,29 @@ export class Runner {
     }
   }
 
-  // "For each row": the page finds the next row that passes the rule
-  // (scrolling for more), then clicks in it or hands back its link, which
-  // opens in a background tab so the list stays where it is.
+  // "For each row": the page makes the next row that passes the rule the
+  // current row, then the steps inside the loop run in that row.
   async _rows(block, label, info) {
     const token = Math.random().toString(36).slice(2);
     let count = 0;
     try {
-      const tab = await chrome.tabs.get(this.tabId);
       while (count < block.max) {
         if (!(await this._checkpoint())) throw new Stopped();
-        this._navigating = false;
-        const res = await this._callPage('nextRow', [block, label, token], block.timeout * 3 + CALL_SLACK_MS);
+        const res = await this._callPage('nextRow', [block, label, token, count === 0], block.timeout * 3 + CALL_SLACK_MS);
         // Rows already handled must not be handled again by a retry.
         if (!res.ok) return count ? { ...res, noRetry: true, error: t('Row {n}: {error}', { n: count + 1, error: res.error }) } : res;
         if (res.done) break;
         count++;
-        if (res.href) {
-          // Only web links are opened; the page already checks this too.
-          if (!/^https?:$/.test(new URL(res.href).protocol)) return { ok: false, error: t('Row {n} has a link ClickFlow will not open.', { n: count }) };
-          await this._guard(chrome.tabs.create({ url: res.href, active: false, windowId: tab.windowId, openerTabId: this.tabId, index: tab.index + count }));
-        } else {
-          await this._guard(sleepMs(NAV_GRACE_MS));
-          if (this._navigating) {
-            await this._settle(res.doc);
-            this.hooks.onRow?.({ ...info, n: count, label: res.label, opened: false });
-            return { ok: false, noRetry: true, error: t('The page changed after row {n}, so the list is gone. Turn on "Open links in a new tab".', { n: count }) };
-          }
+        this.hooks.onRow?.({ ...info, n: count, label: res.label });
+        for (let i = 0; i < block.steps.length; i++) {
+          if (!(await this._checkpoint())) throw new Stopped();
+          const inner = { ...block.steps[i], rowJob: token };
+          const r = await this._runStep(inner, { ...info, blockId: inner.id, row: count, sub: i, subs: block.steps.length });
+          if (this._stopped) throw new Stopped();
+          // The inner step is already logged and marked; this ends the loop.
+          if (!r.ok) return { ok: false, noRetry: true, inner: true, error: t('Row {n}: {error}', { n: count, error: r.error }) };
+          if (i < block.steps.length - 1) await this._sleep(this._plan.stepDelay);
         }
-        this.hooks.onRow?.({ ...info, n: count, label: res.label, opened: Boolean(res.href) });
-        if (count < block.max) await this._sleep(block.gap);
       }
       return { ok: true, rows: count };
     } catch (e) {
@@ -412,6 +427,13 @@ export class Runner {
       if (e instanceof Hung) return { ok: false, error: t('The page stopped responding. Try reloading it.') };
       return { ok: false, error: friendlyError(e.message) };
     }
+  }
+
+  // A web link from a row: a background tab next to the list's tab.
+  async _openTab(url) {
+    if (!/^https?:$/.test(new URL(url).protocol)) throw new Error(t('ClickFlow only opens web links.'));
+    const tab = await chrome.tabs.get(this.tabId);
+    await this._guard(chrome.tabs.create({ url, active: false, windowId: tab.windowId, openerTabId: this.tabId, index: tab.index + 1 + this._opened++ }));
   }
 
   // Fire-and-forget page calls (badge, pause, abort). Bounded so a frozen

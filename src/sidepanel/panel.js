@@ -1,5 +1,6 @@
 import {
-  BLOCK_TYPES, LIMITS, cleanDataName, isShown, newBlock, newDataset, newId, newPlan, sanitizeBlock, uniqueDataName, waitMax,
+  BLOCK_TYPES, INNER_TYPES, LIMITS, LIMITS_INNER, allSteps, cleanDataName, isShown, newBlock, newDataset, newId, newPlan,
+  sanitizeBlock, uniqueDataName, waitMax,
 } from '../shared/schema.js';
 import { LANGS, captureStatic, getLang, setLang, t, translateStatic } from '../shared/i18n.js';
 import { dataRef, datasetValues, nameFromSelector, renameReferences, runCount, usedDatasets } from '../shared/data.js';
@@ -186,8 +187,31 @@ async function onImportFile(e) {
 
 // ---------- Steps ----------
 
-let dragId = null;
-let dropTarget = null;
+// Where a step lives: the plan's list, or the steps of a "For each row" block.
+function locate(id) {
+  const p = plan();
+  for (let i = 0; i < p.blocks.length; i++) {
+    const b = p.blocks[i];
+    if (b.id === id) return { list: p.blocks, index: i, parent: null };
+    const j = b.steps ? b.steps.findIndex((x) => x.id === id) : -1;
+    if (j >= 0) return { list: b.steps, index: j, parent: b };
+  }
+  return null;
+}
+
+function findBlock(id) {
+  const at = locate(id);
+  return at ? at.list[at.index] : null;
+}
+
+// "3", or "3.2" for the 2nd step inside step 3.
+function stepNo(id) {
+  const at = locate(id);
+  if (!at) return '';
+  return at.parent ? `${plan().blocks.indexOf(at.parent) + 1}.${at.index + 1}` : String(at.index + 1);
+}
+
+const stepTotal = () => allSteps(plan().blocks).length;
 
 function renderBlocks() {
   const p = plan();
@@ -201,7 +225,7 @@ function renderBlocks() {
   }
   $('emptyState').hidden = !empty || Boolean(state.rec);
   $('addWrap').hidden = empty && !state.rec;
-  $('stepCount').textContent = p.blocks.length || '';
+  $('stepCount').textContent = stepTotal() || '';
   $('runBtn').disabled = empty;
 }
 
@@ -210,14 +234,13 @@ function cardFor(id) {
 }
 
 function rerenderBlock(id) {
-  const p = plan();
-  const i = p.blocks.findIndex((b) => b.id === id);
+  const at = locate(id);
   const old = cardFor(id);
-  if (i < 0 || !old) return;
-  old.replaceWith(blockCard(p.blocks[i], i, p.blocks.length));
+  if (!at || !old) return;
+  old.replaceWith(blockCard(at.list[at.index], at.index, at.list.length, at.parent));
 }
 
-function blockCard(b, index, total) {
+function blockCard(b, index, total, parent = null) {
   const def = BLOCK_TYPES[b.type];
   const error = state.run.errors[b.id];
   const classes = ['block', `t-${b.type}`];
@@ -230,7 +253,7 @@ function blockCard(b, index, total) {
   const grip = h('button', {
     class: 'icon-btn grip',
     title: t('Drag to reorder (or focus and press ↑ / ↓)'),
-    'aria-label': t('Reorder step {n} with the arrow keys', { n: index + 1 }),
+    'aria-label': t('Reorder step {n} with the arrow keys', { n: parent ? `${plan().blocks.indexOf(parent) + 1}.${index + 1}` : index + 1 }),
     onkeydown: (e) => {
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
@@ -250,7 +273,7 @@ function blockCard(b, index, total) {
   });
   del.addEventListener('blur', resetDel);
 
-  const head = h('div', { class: 'block-head', draggable: true },
+  const head = h('div', { class: 'block-head' },
     grip,
     h('span', { class: 'type-icon' }, icon(BLOCK_UI[b.type].icon)),
     h('button', {
@@ -268,8 +291,8 @@ function blockCard(b, index, total) {
       }),
       h('span')),
     h('div', { class: 'block-actions' },
-      h('button', { class: 'icon-btn', title: t('Move up'), 'aria-label': t('Move up'), disabled: index === 0, onclick: () => moveBy(b.id, -1) }, icon('up', 15)),
-      h('button', { class: 'icon-btn', title: t('Move down'), 'aria-label': t('Move down'), disabled: index === total - 1, onclick: () => moveBy(b.id, 1) }, icon('down', 15)),
+      h('button', { class: 'icon-btn move-up', title: t('Move up'), 'aria-label': t('Move up'), disabled: index === 0 && !parent, onclick: () => moveBy(b.id, -1) }, icon('up', 15)),
+      h('button', { class: 'icon-btn move-down', title: t('Move down'), 'aria-label': t('Move down'), disabled: index === total - 1 && !parent, onclick: () => moveBy(b.id, 1) }, icon('down', 15)),
       h('button', { class: 'icon-btn', title: t('Test this step on the page'), 'aria-label': t('Test this step'), onclick: () => startRun(b.id) }, icon('play', 14)),
       h('button', { class: 'icon-btn', title: t('Duplicate'), 'aria-label': t('Duplicate step'), onclick: () => duplicateBlock(b.id) }, icon('copy', 15)),
       del));
@@ -280,22 +303,32 @@ function blockCard(b, index, total) {
   if (!b.collapsed) {
     card.append(h('div', { class: 'block-body' }, def.fields.filter((f) => isShown(f, b)).map((f) => fieldControl(b, f, li)), waitControl(b, li)));
   }
-  li.append(h('div', { class: 'rail' }, h('span', { class: 'step-no' }, index + 1)), card);
+  // A row loop shows the steps it runs in each row, expanded or not.
+  if (b.steps) {
+    card.append(h('div', { class: 'inner-steps' },
+      h('div', { class: 'inner-label' }, t('In each matching row, do:')),
+      h('ol', { class: 'timeline inner', dataset: { parent: b.id } }, b.steps.map((x, i) => blockCard(x, i, b.steps.length, b))),
+      !b.steps.length && h('p', { class: 'inner-empty muted' }, t('Add steps here, or drag steps in.')),
+      addInsideMenu(b)));
+  }
+  const no = parent ? `${plan().blocks.indexOf(parent) + 1}.${index + 1}` : index + 1;
+  li.append(h('div', { class: 'rail' }, h('span', { class: 'step-no' }, no)), card);
 
-  head.addEventListener('dragstart', (e) => {
-    if (busy()) return e.preventDefault();
-    dragId = b.id;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', b.id);
-    e.dataTransfer.setDragImage(card, 24, 20);
-    requestAnimationFrame(() => li.classList.add('dragging'));
-  });
-  head.addEventListener('dragend', () => {
-    li.classList.remove('dragging');
-    dragId = null;
-    clearDropMarks();
-  });
+  head.addEventListener('pointerdown', (e) => startDrag(e, b, li));
   return li;
+}
+
+// "+ Add step inside" a row loop: any step type except another loop.
+function addInsideMenu(b) {
+  const menu = h('div', { class: 'menu add-menu inner-menu', role: 'menu', hidden: true },
+    INNER_TYPES.map((type) => addMenuItem(type, () => addBlock(type, b.id))));
+  const btn = h('button', {
+    class: 'btn btn-add btn-small add-inside-btn',
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    onclick: (e) => { e.stopPropagation(); toggleMenu(btn, menu); },
+  }, icon('plus', 13), t('Add step inside'));
+  return h('div', { class: 'menu-wrap add-inside' }, btn, menu);
 }
 
 function fieldControl(b, f, li) {
@@ -477,11 +510,12 @@ function openDataset(id) {
   card?.querySelector('textarea')?.focus({ preventScroll: true });
 }
 
-function addBlock(type) {
-  const p = plan();
-  if (p.blocks.length >= LIMITS.blocks) return toast(t('A plan can have up to {n} steps.', { n: LIMITS.blocks }), 'error');
+function addBlock(type, parentId = null) {
+  if (stepTotal() >= LIMITS.blocks) return toast(t('A plan can have up to {n} steps.', { n: LIMITS.blocks }), 'error');
+  const list = parentId ? findBlock(parentId).steps : plan().blocks;
+  if (parentId && list.length >= LIMITS_INNER) return toast(t('A row loop can have up to {n} steps.', { n: LIMITS_INNER }), 'error');
   const b = newBlock(type);
-  p.blocks.push(b);
+  list.push(b);
   save();
   renderBlocks();
   const card = cardFor(b.id);
@@ -492,15 +526,18 @@ function addBlock(type) {
 
 function removeBlock(id) {
   const p = plan();
-  const index = p.blocks.findIndex((b) => b.id === id);
-  const [removed] = p.blocks.splice(index, 1);
+  const { list, index, parent } = locate(id);
+  const [removed] = list.splice(index, 1);
   const planId = p.id;
+  const parentId = parent?.id;
   toast(t('Step deleted.'), 'info', 5000, {
     label: t('Undo'),
     run: () => {
       const target = state.plans.find((x) => x.id === planId);
       if (!target || busy()) return;
-      target.blocks.splice(Math.min(index, target.blocks.length), 0, removed);
+      // Back where it was: inside its row loop if that still exists.
+      const into = (parentId && target.blocks.find((x) => x.id === parentId)?.steps) || target.blocks;
+      into.splice(Math.min(index, into.length), 0, removed);
       save();
       if (state.currentId === planId) renderBlocks();
     },
@@ -511,66 +548,156 @@ function removeBlock(id) {
 }
 
 function duplicateBlock(id) {
-  const p = plan();
-  if (p.blocks.length >= LIMITS.blocks) return toast(t('A plan can have up to {n} steps.', { n: LIMITS.blocks }), 'error');
-  const i = p.blocks.findIndex((b) => b.id === id);
-  const copy = { ...structuredClone(p.blocks[i]), id: newId() };
-  p.blocks.splice(i + 1, 0, copy);
+  const { list, index, parent } = locate(id);
+  const copy = { ...structuredClone(list[index]), id: newId() };
+  copy.steps?.forEach((x) => { x.id = newId(); });
+  if (stepTotal() + 1 + (copy.steps?.length || 0) > LIMITS.blocks) return toast(t('A plan can have up to {n} steps.', { n: LIMITS.blocks }), 'error');
+  if (parent && list.length >= LIMITS_INNER) return toast(t('A row loop can have up to {n} steps.', { n: LIMITS_INNER }), 'error');
+  list.splice(index + 1, 0, copy);
   save();
   renderBlocks();
   cardFor(copy.id).classList.add('just-added');
 }
 
+// One step up or down. At the edge of a row loop, a step moves out of it,
+// just above or below the loop.
 function moveBy(id, delta) {
-  const blocks = plan().blocks;
-  const from = blocks.findIndex((b) => b.id === id);
-  const to = from + delta;
-  if (to < 0 || to >= blocks.length) return;
-  blocks.splice(to, 0, blocks.splice(from, 1)[0]);
+  const at = locate(id);
+  const to = at.index + delta;
+  if (to >= 0 && to < at.list.length) {
+    at.list.splice(to, 0, at.list.splice(at.index, 1)[0]);
+  } else if (at.parent) {
+    const [moved] = at.list.splice(at.index, 1);
+    const blocks = plan().blocks;
+    const i = blocks.indexOf(at.parent);
+    blocks.splice(delta < 0 ? i : i + 1, 0, moved);
+  } else {
+    return;
+  }
   save();
   renderBlocks();
   cardFor(id)?.querySelector('.grip')?.focus();
 }
 
-function moveTo(id, targetId, after) {
-  const blocks = plan().blocks;
-  const [moved] = blocks.splice(blocks.findIndex((b) => b.id === id), 1);
-  blocks.splice(blocks.findIndex((b) => b.id === targetId) + (after ? 1 : 0), 0, moved);
+// dest: { parentId (a row loop, or null for the plan), index in that list }.
+function moveTo(id, dest) {
+  const at = locate(id);
+  const moved = at.list[at.index];
+  const list = dest.parentId ? findBlock(dest.parentId)?.steps : plan().blocks;
+  if (!list || (dest.parentId && moved.steps)) return;
+  if (dest.parentId && list !== at.list && list.length >= LIMITS_INNER) return toast(t('A row loop can have up to {n} steps.', { n: LIMITS_INNER }), 'error');
+  let index = dest.index;
+  if (list === at.list && at.index < index) index--;
+  if (list === at.list && index === at.index) return;
+  at.list.splice(at.index, 1);
+  list.splice(index, 0, moved);
   save();
   renderBlocks();
+  cardFor(id)?.classList.add('just-added');
 }
 
 function clearDropMarks() {
-  for (const el of $('blockList').querySelectorAll('.drop-before, .drop-after')) el.classList.remove('drop-before', 'drop-after');
-  dropTarget = null;
+  for (const el of $('blockList').querySelectorAll('.drop-before, .drop-after, .drop-inside')) el.classList.remove('drop-before', 'drop-after', 'drop-inside');
 }
 
-function setupDragAndDrop() {
-  const list = $('blockList');
-  list.addEventListener('dragover', (e) => {
-    if (!dragId) return;
-    e.preventDefault();
-    const li = e.target.closest('.block');
-    if (!li || li.dataset.id === dragId) return;
-    const r = li.getBoundingClientRect();
-    const after = e.clientY > r.top + r.height / 2;
-    if (dropTarget?.id === li.dataset.id && dropTarget.after === after) return;
+// Where a dragged step would land at height y: a slot in the plan, or in a
+// row loop's steps (never a loop inside a loop). Marks the spot.
+function dropAt(y, b, dragLi) {
+  clearDropMarks();
+  const cards = (ol) => [...ol.children].filter((c) => c.matches('li.block'));
+  let ol = $('blockList');
+  let parentId = null;
+  if (!b.steps) {
+    const loop = cards(ol).find((c) => {
+      if (c === dragLi || !c.classList.contains('t-rows')) return false;
+      const r = c.querySelector('.inner-steps').getBoundingClientRect();
+      return y >= r.top && y <= r.bottom;
+    });
+    if (loop) {
+      ol = loop.querySelector('ol.inner');
+      parentId = loop.dataset.id;
+    }
+  }
+  const kids = cards(ol);
+  let index = kids.length;
+  for (let i = 0; i < kids.length; i++) {
+    if (kids[i] === dragLi) continue;
+    const r = kids[i].getBoundingClientRect();
+    if (y < r.top + r.height / 2) { index = i; break; }
+  }
+  const others = kids.filter((c) => c !== dragLi);
+  if (!others.length) ol.closest('.inner-steps')?.classList.add('drop-inside');
+  else if (index < kids.length && kids[index] !== dragLi) kids[index].classList.add('drop-before');
+  else if (index < kids.length) kids[index + 1]?.classList.add('drop-before');
+  else others.at(-1).classList.add('drop-after');
+  return { parentId, index };
+}
+
+// Drag a step by its header (pointer events, so it works in the side panel
+// and can scroll the list): up, down, past several steps, or into and out
+// of a row loop. Esc cancels. A press without movement is still a click.
+function startDrag(e, b, li) {
+  if (e.button !== 0 || busy() || e.target.closest('input, select, textarea, .switch, .block-actions')) return;
+  const main = $('main');
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  let y = y0;
+  let active = false;
+  let dest = null;
+  let timer = null;
+  const scroll = () => {
+    const r = main.getBoundingClientRect();
+    const dy = y < r.top + 48 ? -Math.ceil((r.top + 48 - y) / 4) : y > r.bottom - 48 ? Math.ceil((y - r.bottom + 48) / 4) : 0;
+    if (dy) {
+      main.scrollTop += dy;
+      dest = dropAt(y, b, li);
+    }
+  };
+  const move = (ev) => {
+    y = ev.clientY;
+    if (!active) {
+      if (Math.abs(ev.clientX - x0) + Math.abs(y - y0) < 6) return;
+      active = true;
+      li.classList.add('dragging');
+      document.body.classList.add('is-dragging');
+      timer = setInterval(scroll, 16);
+    }
+    ev.preventDefault();
+    dest = dropAt(y, b, li);
+  };
+  const finish = (drop) => {
+    document.removeEventListener('pointermove', move, true);
+    document.removeEventListener('pointerup', up, true);
+    document.removeEventListener('pointercancel', cancel, true);
+    document.removeEventListener('keydown', key, true);
+    clearInterval(timer);
     clearDropMarks();
-    li.classList.add(after ? 'drop-after' : 'drop-before');
-    dropTarget = { id: li.dataset.id, after };
-  });
-  list.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if (dragId && dropTarget) moveTo(dragId, dropTarget.id, dropTarget.after);
-    clearDropMarks();
-  });
+    li.classList.remove('dragging');
+    document.body.classList.remove('is-dragging');
+    if (!active) return;
+    // The click that ends a drag must not also toggle the step open/closed.
+    const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+    document.addEventListener('click', swallow, { capture: true, once: true });
+    setTimeout(() => document.removeEventListener('click', swallow, true), 0);
+    if (drop && dest) moveTo(b.id, dest);
+  };
+  const up = () => finish(true);
+  const cancel = () => finish(false);
+  const key = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(false); } };
+  document.addEventListener('pointermove', move, true);
+  document.addEventListener('pointerup', up, true);
+  document.addEventListener('pointercancel', cancel, true);
+  document.addEventListener('keydown', key, true);
+}
+
+function addMenuItem(type, onPick) {
+  return h('button', { role: 'menuitem', class: `t-${type}`, onclick: () => { closeMenus(); onPick(); } },
+    h('span', { class: 'type-icon' }, icon(BLOCK_UI[type].icon)),
+    h('span', { class: 'add-label' }, h('strong', {}, t(BLOCK_TYPES[type].label)), h('small', {}, t(BLOCK_UI[type].desc))));
 }
 
 function buildAddMenu() {
-  $('addMenu').replaceChildren(...Object.entries(BLOCK_TYPES).map(([type, def]) =>
-    h('button', { role: 'menuitem', class: `t-${type}`, onclick: () => { closeMenus(); addBlock(type); } },
-      h('span', { class: 'type-icon' }, icon(BLOCK_UI[type].icon)),
-      h('span', { class: 'add-label' }, h('strong', {}, t(def.label)), h('small', {}, t(BLOCK_UI[type].desc))))));
+  $('addMenu').replaceChildren(...Object.keys(BLOCK_TYPES).map((type) => addMenuItem(type, () => addBlock(type))));
 }
 
 // ---------- Menus ----------
@@ -589,6 +716,10 @@ function closeMenus() {
   for (const [btn, menu] of [['planMenuBtn', 'planMenu'], ['addBtn', 'addMenu']]) {
     $(menu).hidden = true;
     $(btn).setAttribute('aria-expanded', 'false');
+  }
+  for (const menu of document.querySelectorAll('.inner-menu')) {
+    menu.hidden = true;
+    menu.previousElementSibling?.setAttribute('aria-expanded', 'false');
   }
 }
 
@@ -795,7 +926,7 @@ const LOG_MAX = 500;
 const shots = [];
 
 const fileName = (name) => `${String(name).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(0, 120) || 'screenshot'}.png`;
-const where = (run, step) => h('span', { class: 'log-where' }, `R${run + 1}·S${step + 1}`);
+const where = (run, step, sub) => h('span', { class: 'log-where' }, `R${run + 1}·S${step + 1}${sub != null ? `.${sub + 1}` : ''}`);
 
 function logAppend(node) {
   const list = $('logList');
@@ -810,32 +941,33 @@ function logSeparator(text) {
   $('logSummary').textContent = text;
 }
 
-function logRetry({ run, step, block, attempt, error }) {
+function logRetry({ run, step, sub, block, attempt, error }) {
   logAppend(h('li', { class: 'log-item retry' },
     icon('alert', 14),
-    h('span', { class: 'log-text' }, where(run, step), t('Retrying ({n}) {step}', { n: attempt, step: summarize(block) }), h('span', { class: 'log-err' }, error)),
+    h('span', { class: 'log-text' }, where(run, step, sub), t('Retrying ({n}) {step}', { n: attempt, step: summarize(block) }), h('span', { class: 'log-err' }, error)),
     h('span', { class: 'log-ms' }, '')));
 }
 
 
 // loadMs: time spent waiting for the page the step opened, so slow sites
 // aren't mistaken for slow steps.
-function logStep({ run, step, block, ok, error, ms, loadMs, rows }) {
+function logStep({ run, step, sub, block, ok, error, ms, loadMs, rows, opened }) {
   if (block.type === 'screenshot' && ok) return; // logged with its image by logShot
   logAppend(h('li', { class: `log-item ${ok ? 'ok' : 'err'}` },
     icon(ok ? 'check' : 'alert', 14),
-    h('span', { class: 'log-text' }, where(run, step), summarize(block),
+    h('span', { class: 'log-text' }, where(run, step, sub), summarize(block),
       !ok && h('span', { class: 'log-err' }, error),
+      opened && h('span', { class: 'log-note' }, t('Opened in a new tab')),
       ok && rows != null && h('span', { class: 'log-note' }, rows ? t(rows === 1 ? '{n} row handled' : '{n} rows handled', { n: rows }) : t('No row matched')),
       ok && loadMs >= 500 && h('span', { class: 'log-note' }, t('{time} of it waiting for the next page to load', { time: duration(loadMs) }))),
     h('span', { class: 'log-ms' }, duration(ms))));
 }
 
-// One line per row a "For each row" step handles.
-function logRow({ run, step, n, label, opened }) {
-  logAppend(h('li', { class: 'log-item ok row' },
+// A heading line for each row a "For each row" step works on.
+function logRow({ run, step, n, label }) {
+  logAppend(h('li', { class: 'log-item row' },
     icon('rows', 14),
-    h('span', { class: 'log-text' }, where(run, step), t(opened ? 'Row {n}: opened {name} in a new tab' : 'Row {n}: clicked {name}', { n, name: `“${label || '…'}”` })),
+    h('span', { class: 'log-text' }, where(run, step), h('strong', {}, t('Row {n}', { n })), ` · “${label || '…'}”`),
     h('span', { class: 'log-ms' }, '')));
 }
 
@@ -1113,7 +1245,7 @@ function onPicked(msg) {
   const pick = state.pick;
   if (!pick || msg.requestId !== pick.requestId) return;
   state.pick = null;
-  const b = plan().blocks.find((x) => x.id === pick.blockId);
+  const b = findBlock(pick.blockId);
   if (!b) return;
   if (msg.type === 'cf-picked' && typeof msg.selector === 'string' && msg.selector.trim()) {
     b[pick.key] = msg.selector.slice(0, LIMITS.selector);
@@ -1246,13 +1378,14 @@ const runner = new Runner({
     renderDock();
     renderBlocks();
   },
-  onProgress({ run, runs, step, steps, blockId }) {
+  onProgress({ run, runs, step, steps, blockId, row }) {
     state.run.blockId = blockId;
     for (const el of $('blockList').querySelectorAll('.is-running')) el.classList.remove('is-running');
     const card = cardFor(blockId);
     card?.classList.add('is-running');
     card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    $('runStatus').textContent = t('Run {run}/{runs} · Step {step}/{steps}', { run: run + 1, runs, step: step + 1, steps });
+    $('runStatus').textContent = t('Run {run}/{runs} · Step {step}/{steps}', { run: run + 1, runs, step: step + 1, steps })
+      + (row ? ` · ${t('Row {n}', { n: row })}` : '');
     $('progressFill').style.width = `${((run * steps + step) / (runs * steps)) * 100}%`;
   },
   onStepError(blockId, message, run) {
@@ -1300,8 +1433,8 @@ function renderDock() {
 function startRun(onlyBlockId = null) {
   if (busy()) return;
   const tab = state.tab;
-  const only = onlyBlockId && plan().blocks.find((b) => b.id === onlyBlockId);
-  const capture = only ? only.type === 'screenshot' : plan().blocks.some((b) => b.enabled && b.type === 'screenshot');
+  const only = onlyBlockId && findBlock(onlyBlockId);
+  const capture = only ? allSteps([only]).some((b) => b.type === 'screenshot') : allSteps(plan().blocks.filter((b) => b.enabled)).some((b) => b.enabled && b.type === 'screenshot');
   (capture ? requestCaptureAccess() : requestSiteAccess()).then((ok) => {
     if (!ok || !tab) return;
     cancelPick();
@@ -1317,7 +1450,7 @@ function startRun(onlyBlockId = null) {
     }
     const { runs } = runCount(snapshot);
     showLog(true);
-    if (only) logSeparator(t('Testing step {n} · {type}', { n: plan().blocks.indexOf(only) + 1, type: typeLabel(only.type) }));
+    if (only) logSeparator(t('Testing step {n} · {type}', { n: stepNo(only.id), type: typeLabel(only.type) }));
     else logSeparator(t('Started {time} · {runs} × {steps} steps', { time: new Date().toLocaleTimeString(), runs: runsText(runs), steps: snapshot.blocks.filter((x) => x.enabled).length }));
     runner.start(snapshot, tab.id).catch((e) => {
       $('runStatus').textContent = t('Ready');
@@ -1408,7 +1541,6 @@ async function init() {
   renderStatic();
   bindSettings();
   bindData();
-  setupDragAndDrop();
   watchTabs();
   window.addEventListener('pagehide', () => { stopRecording(); flushState(); });
 

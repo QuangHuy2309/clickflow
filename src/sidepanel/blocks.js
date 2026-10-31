@@ -10,7 +10,7 @@ export const BLOCK_UI = {
   wait: { icon: 'wait', desc: 'Pause for a while or until something appears' },
   scroll: { icon: 'scroll', desc: 'Scroll the page or an element' },
   screenshot: { icon: 'camera', desc: 'Capture the page or one element as an image' },
-  rows: { icon: 'rows', desc: 'Click in every row of a list that matches a rule' },
+  rows: { icon: 'rows', desc: 'Repeat steps for every row of a list that matches a rule' },
 };
 
 const CLICK_VERB = { left: 'Click', right: 'Right-click', double: 'Double-click' };
@@ -51,10 +51,11 @@ function describe(b) {
       if (b.mode === 'into-view') return t('Bring {sel} into view', { sel });
       return t(b.selector ? '{dir} {px}px in {sel}' : '{dir} {px}px on page', { dir: t(b.amount >= 0 ? 'Down' : 'Up'), px: Math.abs(b.amount), sel });
     case 'rows': {
-      if (!b.target) return t('Choose what to click in each row');
-      const what = t('Click {sel} in each row', { sel: short(b.target, 22) });
-      const rule = b.op === 'any' ? '' : ` · ${short(b.cell, 16) || '?'} ${b.op === 'contains' ? t('contains') : OP_TEXT[b.op]} ${value(b.value, 12)}`;
-      return `${what}${rule}${b.onlyTicked ? ` · ${t('ticked only')}` : ''}`;
+      if (!b.row) return t('Pick a row of the list');
+      const rule = b.op === 'any' ? t('every row') : b.op === 'ticked' ? t('ticked rows')
+        : `${short(b.cell, 16) || '?'} ${b.op === 'contains' ? t('contains') : OP_TEXT[b.op]} ${value(b.value, 12)}`;
+      const n = (b.steps || []).filter((x) => x.enabled).length;
+      return `${t('Rows like {sel}', { sel: short(b.row, 18) })} · ${rule} · ${t(n === 1 ? '{n} step' : '{n} steps', { n })}`;
     }
     default:
       return '';

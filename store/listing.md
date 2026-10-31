@@ -25,7 +25,7 @@ OR BUILD A PLAN FROM SIMPLE STEPS
 • Select / find in list: pick an option from a dropdown, or scroll a long list until it finds your value
 • Wait: for a set time, or until something appears or disappears
 • Scroll: the page or any scrollable area
-• For each row: in a list or table, click the same link or button in every row that matches a rule (a cell equals, is greater than, or contains a value, or the row is ticked), opening links in background tabs
+• For each row: repeat steps in every row of a list or table that matches a rule (every row, ticked rows, or a cell that equals, is greater than, or contains a value). Links open in background tabs
 
 Any step can wait afterwards (up to 59 minutes) before the next one starts.
 

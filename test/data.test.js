@@ -203,14 +203,48 @@ test('"Then wait" on any step: seconds or minutes, always under an hour', () => 
   assert.equal(waitAfterMs(plan.blocks[0]), 0);
 });
 
-test('For each row: the cell is required only when there is a rule', () => {
-  const b = { ...newBlock('rows'), target: '#r1 a' };
+test('For each row: a row, a cell when the rule needs one, and steps inside', () => {
+  const click = { ...newBlock('click'), selector: '#r1 a' };
+  const b = { ...newBlock('rows'), row: '#r1', steps: [click] };
+  assert.deepEqual(newBlock('rows').steps, []);
   assert.equal(validateBlock(b), null, 'every row: no cell needed');
+  assert.match(validateBlock({ ...b, row: '' }), /A row of the list/);
   assert.match(validateBlock({ ...b, op: 'gt' }), /Cell to check/);
   assert.equal(validateBlock({ ...b, op: 'gt', cell: '#r1 .c3' }), null);
-  assert.match(validateBlock({ ...b, target: '' }), /Click this in each row/);
-  const clean = sanitizeBlock({ ...b, op: 'hack', max: 1e9, newTab: 'yes' });
-  assert.equal(clean.op, 'any');
-  assert.equal(clean.max, 500);
-  assert.equal(clean.newTab, true, 'non-boolean falls back to the default');
+  assert.equal(validateBlock({ ...b, op: 'ticked' }), null, 'ticked: the checkbox is optional');
+  assert.match(validateBlock({ ...b, steps: [] }), /at least one step inside/);
+  assert.match(validateBlock({ ...b, steps: [{ ...click, enabled: false }] }), /at least one step inside/);
+});
+
+test('For each row: nested steps are sanitized, one level deep, within the step limit', () => {
+  const inner = (n) => Array.from({ length: n }, () => ({ type: 'click', selector: '#a' }));
+  const { plan } = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', op: 'hack', steps: [
+    { type: 'click', selector: '#x', evil: '<script>' },
+    { type: 'rows', row: '#nested', steps: inner(2) },
+    { type: 'nope' },
+    'junk',
+  ] }] });
+  const loop = plan.blocks[0];
+  assert.equal(loop.op, 'any');
+  assert.deepEqual(loop.steps.map((x) => x.type), ['click'], 'no loop inside a loop, junk dropped');
+  assert.equal(loop.steps[0].evil, undefined);
+  // The plan limit counts nested steps: 1 loop + 199 inside is the most.
+  const big = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', steps: inner(60) }, ...inner(150)] });
+  const count = big.plan.blocks.reduce((n, x) => n + 1 + (x.steps?.length || 0), 0);
+  assert.ok(count <= LIMITS.blocks, `kept ${count}`);
+  assert.equal(big.plan.blocks[0].steps.length, 50, 'at most 50 steps inside one loop');
+  assert.ok(big.dropped > 0);
+  // Fresh ids for nested steps too, all unique.
+  const ids = sanitizePlan({ blocks: [{ type: 'rows', row: '#r', steps: inner(3) }] }, { fresh: true }).plan.blocks.flatMap((x) => [x.id, ...x.steps.map((y) => y.id)]);
+  assert.equal(new Set(ids).size, 4);
+});
+
+test('data sets used inside a row loop count, unless the loop is off', () => {
+  const p = planWith([['names', 'a\nb']], [{ ...newBlock('rows'), row: '#r', steps: [typeStep('{{names}}')] }]);
+  assert.deepEqual([...usedDatasets(p, { enabledOnly: true })], ['names']);
+  assert.equal(runCount(p).runs, 2);
+  p.blocks[0].enabled = false;
+  assert.deepEqual([...usedDatasets(p, { enabledOnly: true })], []);
+  renameReferences(p, 'names', 'people');
+  assert.equal(p.blocks[0].steps[0].text, '{{people}}');
 });

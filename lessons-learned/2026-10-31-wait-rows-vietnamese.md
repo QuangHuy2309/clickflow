@@ -56,3 +56,17 @@ Regression tests:
 ## Shell quoting on Windows (again)
 
 - `\b` inside `node -e "…"` through bash became a backspace character (0x08) in a test regex, and `\\s` lost its backslash in a heredoc. For anything with regexes or quotes, write the edit script with the Write tool and run it, or use Edit directly (rule from the initial build).
+
+## Follow-up: "For each row" was too complex; moving steps
+
+- **Feedback:** the first version (one target per row, plus checkbox, new-tab, gap and row options) was too complex. The user wanted "if the row matches, do all the steps inside it", and an easier way to move steps: one up or down, or dragged past several.
+- **Change:**
+  - **For each row is now a container (`steps`, one level deep):** you pick one row, then a rule (every row, ticked rows, or a cell rule), then add steps inside. Inner steps carry the loop's token. While one runs, `query()` searches only the current row: a selector picked in any row is mapped by its position inside that row (`inRow`), found once and cached.
+  - **Links:** a left click on a web link inside a row opens a background tab, so the list stays.
+  - **Finding the row:** the row is the ancestor of the picked element with the most siblings like it, so picking a link or cell inside a row works too.
+  - **Moving:** dragging now uses pointer events instead of HTML5 drag and drop. It auto-scrolls the list, drops into and out of a loop, Esc cancels it, and a press without movement still counts as a click. At a loop's edge, ↑/↓ move a step out of the loop.
+- **Bug found by a screenshot:** when a step inside a loop failed, every step in that loop got a red border. `.block.is-error .step-card` also matched nested cards. **Fix:** child combinators (`.block.is-error > .step-card`, `> .rail .step-no`) for every state class. **Guard:** e2e compares the computed border colors of the failing and passing inner steps.
+- **Test lessons:**
+  - `button:has-text("Scroll")` matched "Select / find in list", whose description mentions scrolling. Match the exact title (`:has(strong:text-is(…))`).
+  - A drop point within 48 px of the list's edge triggers auto-scroll, which made a drag test flaky. Keep test drops away from the edges.
+- **Guard:** e2e "move steps…" (drag past two steps, into and out of a loop, ↑/↓ out of a loop, Esc) and five "for each row" checks (two steps per row, ticked rows, a limit with the row picked by an inner element, "1,250" read as 1250, a failing inner step). Unit tests cover nested sanitizing (one level deep, at most 50 per loop, the plan limit counts nested steps, fresh ids) and data sets used inside loops.

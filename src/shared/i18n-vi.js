@@ -15,10 +15,7 @@ export const VI = {
   '{dir} {px}px on page': '{dir} {px}px trên trang',
   Down: 'Xuống',
   Up: 'Lên',
-  'Choose what to click in each row': 'Chọn thứ cần nhấp trong mỗi hàng',
-  'Click {sel} in each row': 'Nhấp {sel} trong mỗi hàng',
   contains: 'chứa',
-  'ticked only': 'chỉ hàng đã tích',
   'then wait {time}': 'sau đó chờ {time}',
   Click: 'Nhấp',
   'Right-click': 'Nhấp chuột phải',
@@ -182,8 +179,6 @@ export const VI = {
   '{n} rows handled': 'Đã xử lý {n} hàng',
   'No row matched': 'Không có hàng nào khớp',
   '{time} of it waiting for the next page to load': 'trong đó {time} chờ trang tiếp theo tải',
-  'Row {n}: opened {name} in a new tab': 'Hàng {n}: đã mở {name} trong thẻ mới',
-  'Row {n}: clicked {name}': 'Hàng {n}: đã nhấp {name}',
   'Run {run}/{runs} · Step {step}/{steps}': 'Lượt {run}/{runs} · Bước {step}/{steps}',
   'waiting {time}': 'đang chờ {time}',
   'Screenshot {name}': 'Ảnh chụp {name}',
@@ -277,9 +272,6 @@ export const VI = {
   "ClickFlow isn't allowed to capture this page. Allow it on this site and try again.":
     'ClickFlow không được phép chụp trang này. Hãy cho phép trên trang này rồi thử lại.',
   'Row {n}: {error}': 'Hàng {n}: {error}',
-  'Row {n} has a link ClickFlow will not open.': 'Hàng {n} có liên kết mà ClickFlow sẽ không mở.',
-  'The page changed after row {n}, so the list is gone. Turn on "Open links in a new tab".':
-    'Trang đã chuyển đi sau hàng {n} nên danh sách không còn. Hãy bật "Mở liên kết trong thẻ mới".',
 
   // ---- Import and validation
   'That file is too large to be a ClickFlow plan.': 'Tệp quá lớn, không phải kịch bản ClickFlow.',
@@ -303,11 +295,6 @@ export const VI = {
   'That element is not a text field.': 'Phần tử đó không phải ô nhập chữ.',
   'The dropdown has no option "{value}".': 'Danh sách thả xuống không có lựa chọn "{value}".',
   'Couldn’t find "{value}" in the list.': 'Không tìm thấy "{value}" trong danh sách.',
-  '"{sel}" isn’t inside the row "{row}".': '"{sel}" không nằm trong hàng "{row}".',
-  'Couldn’t find the rows around "{sel}". Pick a whole row in the Row field.':
-    'Không xác định được các hàng chứa "{sel}". Hãy chọn cả một hàng ở ô Hàng.',
-  'The cell to check must be in the same row as the element to click.': 'Ô cần kiểm tra phải nằm cùng hàng với phần tử cần nhấp.',
-  'The checkbox must be in the same row as the element to click.': 'Ô đánh dấu phải nằm cùng hàng với phần tử cần nhấp.',
 
   // ---- Step types and fields
   Element: 'Phần tử',
@@ -352,11 +339,6 @@ export const VI = {
   'File name': 'Tên tệp',
   '{{index}} = run number; data sets work too': '{{index}} = số thứ tự lượt; cũng dùng được bộ dữ liệu',
   'For each row': 'Với mỗi hàng',
-  'Click this in each row': 'Nhấp vào đây ở mỗi hàng',
-  'Pick it in any one row (e.g. the name link). ClickFlow finds the same thing in the other rows.':
-    'Chọn nó ở một hàng bất kỳ (ví dụ liên kết tên). ClickFlow sẽ tìm đúng vị trí đó ở các hàng khác.',
-  'Open links in a new tab': 'Mở liên kết trong thẻ mới',
-  'Keeps the list open, so the next row is still there': 'Giữ nguyên danh sách để còn xử lý hàng tiếp theo',
   'Which rows': 'Hàng nào',
   'Every row': 'Mọi hàng',
   'Cell equals': 'Ô bằng',
@@ -365,22 +347,17 @@ export const VI = {
   'Cell is less than': 'Ô nhỏ hơn',
   'Cell contains': 'Ô có chứa',
   'Cell to check': 'Ô cần kiểm tra',
-  'Pick the cell in the same row as the element above': 'Chọn ô nằm cùng hàng với phần tử ở trên',
   Value: 'Giá trị',
-  'Only rows whose checkbox is ticked': 'Chỉ những hàng đã được tích',
   'Checkbox (optional)': 'Ô đánh dấu (tùy chọn)',
   'Leave empty to use the first checkbox in each row': 'Để trống để dùng ô đánh dấu đầu tiên của mỗi hàng',
   'At most this many rows': 'Tối đa số hàng',
-  'Wait between rows (ms)': 'Nghỉ giữa các hàng (ms)',
-  'Row (optional)': 'Hàng (tùy chọn)',
-  'Leave empty to find the rows automatically': 'Để trống để tự tìm các hàng',
   'Click a button, link or any element': 'Nhấp nút, liên kết hoặc phần tử bất kỳ',
   'Type text into a field (supports {{value}})': 'Gõ chữ vào ô nhập (hỗ trợ {{value}})',
   'Pick a dropdown option or scroll a list to find it': 'Chọn trong danh sách thả xuống hoặc cuộn danh sách để tìm',
   'Pause for a while or until something appears': 'Chờ một lúc hoặc đến khi có gì đó xuất hiện',
   'Scroll the page or an element': 'Cuộn trang hoặc một phần tử',
   'Capture the page or one element as an image': 'Chụp trang hoặc một phần tử thành ảnh',
-  'Click in every row of a list that matches a rule': 'Nhấp vào mỗi hàng của danh sách khớp điều kiện',
+  'Repeat steps for every row of a list that matches a rule': 'Lặp lại các bước cho mỗi hàng của danh sách khớp điều kiện',
 
   // ---- Static page text
   'Click & type automation': 'Tự động nhấp & gõ',
@@ -392,4 +369,26 @@ export const VI = {
   'Press record and use the page as usual. Every click, text entry and selection becomes a step you can replay.':
     'Nhấn Ghi và dùng trang như bình thường. Mỗi lần nhấp, gõ chữ hay chọn đều thành một bước có thể chạy lại.',
   'or add steps manually': 'hoặc tự thêm bước',
+
+  // ---- For each row (container)
+  "Pick a row of the list": "Chọn một hàng của danh sách",
+  "every row": "mọi hàng",
+  "ticked rows": "hàng đã tích",
+  "Rows like {sel}": "Các hàng giống {sel}",
+  "{n} step": "{n} bước",
+  "{n} steps": "{n} bước",
+  "In each matching row, do:": "Ở mỗi hàng khớp, làm:",
+  "Add steps here, or drag steps in.": "Thêm bước ở đây, hoặc kéo bước vào.",
+  "Add step inside": "Thêm bước bên trong",
+  "A row loop can have up to {n} steps.": "Một vòng lặp hàng có tối đa {n} bước.",
+  "Opened in a new tab": "Đã mở trong thẻ mới",
+  "Row {n}": "Hàng {n}",
+  "ClickFlow only opens web links.": "ClickFlow chỉ mở liên kết web.",
+  "Add at least one step inside it.": "Hãy thêm ít nhất một bước bên trong.",
+  "The list is gone: the page changed while the last row was handled.": "Danh sách không còn: trang đã thay đổi trong lúc xử lý hàng trước.",
+  "Couldn’t find a list of rows around \"{sel}\". Pick one row of the list.": "Không tìm thấy danh sách hàng quanh \"{sel}\". Hãy chọn một hàng của danh sách.",
+  "A row of the list": "Một hàng của danh sách",
+  "Pick any one row. ClickFlow finds the others like it.": "Chọn một hàng bất kỳ. ClickFlow sẽ tìm các hàng giống nó.",
+  "Rows that are ticked": "Những hàng đã được tích",
+  "Pick it in any row": "Chọn nó ở một hàng bất kỳ",
 };

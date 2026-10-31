@@ -24,9 +24,10 @@
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 
+  // Inside a row loop (see enterRow), only the current row is searched.
   function query(selector) {
     try {
-      return document.querySelector(selector);
+      return scope ? inRow(selector, scope, scope.current) : document.querySelector(selector);
     } catch {
       throw new StepError('"{sel}" is not a valid CSS selector.', { sel: selector });
     }
@@ -228,6 +229,7 @@
   // For element screenshots: scroll it into view and report its box.
   async function measure(b) {
     try {
+      enterRow(b);
       const el = await waitFor(b.selector, b.timeout);
       el.scrollIntoView({ block: 'center', inline: 'center' });
       await sleep(120);
@@ -235,6 +237,8 @@
       return { ok: true, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, dpr: window.devicePixelRatio };
     } catch (e) {
       return { ok: false, error: errorOf(e) };
+    } finally {
+      scope = null;
     }
   }
 
@@ -351,6 +355,8 @@
   const sameKind = (a, b) => a.tagName === b.tagName
     && (a.classList.length ? [...a.classList].some((c) => b.classList.contains(c)) : !b.classList.length);
 
+  const likeSiblings = (n) => [...n.parentElement.children].filter((c) => sameKind(c, n));
+
   // Where `el` sits inside `row`, as tag + position steps, so the same spot
   // can be found in every other row.
   function pathFrom(row, el) {
@@ -370,17 +376,18 @@
     return n;
   }
 
-  // The row an element is in: the nearest ancestor (holding `inside` too)
-  // with at least 3 siblings like it that have the same element in the same
-  // spot. That rules out table cells and pairs such as a name and its id.
-  function findRow(el, inside) {
+  // The row of a picked element: of it and its ancestors, the one with the
+  // most siblings like it (at least 2), so picking a link or a cell inside a
+  // row still finds the row. Table cells are never rows.
+  function findRow(el) {
+    let best = null;
+    let most = 1;
     for (let n = el; n?.parentElement && n !== document.body; n = n.parentElement) {
-      if (/^T[DH]$/.test(n.tagName) || (inside && !n.contains(inside))) continue;
-      const path = pathFrom(n, el);
-      const like = [...n.parentElement.children].filter((c) => sameKind(c, n) && follow(c, path));
-      if (like.length >= 3) return n;
+      if (/^T[DH]$/.test(n.tagName)) continue;
+      const count = likeSiblings(n).length;
+      if (count > most) { best = n; most = count; }
     }
-    return null;
+    return best;
   }
 
   const fieldText = (el) => (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement
@@ -409,56 +416,40 @@
     }
   }
 
-  // One job per "For each row" step run (the runner's token). Paths are found
-  // once, from the row the elements were picked in: that row may later scroll
-  // out of a virtual list. Rows are remembered by link (or text), so rows a
-  // lazy list re-renders or recycles aren't handled twice.
+  // One job per run of a "For each row" step (the runner's token). Rows are
+  // remembered by their first link (or text) and by element, so rows a lazy
+  // list re-renders or recycles aren't handled twice. `current` is the row
+  // the steps inside the loop are working in.
   const rowJobs = new Map();
-
-  async function rowJob(b, token) {
-    if (rowJobs.has(token)) return rowJobs.get(token);
-    const target = await waitFor(b.target, b.timeout);
-    const cell = b.op !== 'any' ? await waitFor(b.cell, b.timeout) : null;
-    let row;
-    if (b.row) {
-      await waitFor(b.row, b.timeout);
-      row = [...document.querySelectorAll(b.row)].find((r) => r.contains(target)) || null;
-      if (!row) throw new StepError('"{sel}" isn’t inside the row "{row}".', { sel: b.target, row: b.row });
-    } else {
-      row = findRow(target, cell);
-      if (!row) throw new StepError('Couldn’t find the rows around "{sel}". Pick a whole row in the Row field.', { sel: b.target });
-    }
-    if (cell && !row.contains(cell)) throw new StepError('The cell to check must be in the same row as the element to click.');
-    const box = b.onlyTicked && b.checkbox ? await waitFor(b.checkbox, b.timeout) : null;
-    if (box && !row.contains(box)) throw new StepError('The checkbox must be in the same row as the element to click.');
-    const job = {
-      container: row.parentElement,
-      sample: row,
-      targetPath: pathFrom(row, target),
-      cellPath: cell && pathFrom(row, cell),
-      boxPath: box && pathFrom(row, box),
-      done: new Set(),
-      seen: new WeakSet(), // also by element, in case a click changes the row's text
-    };
-    rowJobs.clear(); // only the current step's job is kept
-    rowJobs.set(token, job);
-    return job;
-  }
+  let scope = null; // the job whose current row the running step works in
 
   const rowsOf = (job) => [...job.container.children].filter((c) => sameKind(c, job.sample));
-  const linkIn = (el) => el.closest('a[href]') || el.querySelector('a[href]');
-  const rowKey = (job, row) => {
-    const target = follow(row, job.targetPath);
-    return target && (linkIn(target)?.href || norm(row.textContent).slice(0, 300));
-  };
+
+  // A selector picked in any row, found in `row`: its spot in the row it was
+  // picked in is worked out once (that row may later scroll out of a virtual
+  // list). A selector that matches nothing in a row is tried inside the row.
+  function inRow(selector, job, row) {
+    if (!job.paths.has(selector)) {
+      let path = null;
+      for (const el of document.querySelectorAll(selector)) {
+        const host = rowsOf(job).find((r) => r.contains(el));
+        if (host) { path = pathFrom(host, el); break; }
+      }
+      job.paths.set(selector, path);
+    }
+    const path = job.paths.get(selector);
+    return path ? follow(row, path) : row.querySelector(selector);
+  }
+
+  const rowKey = (row) => row.querySelector('a[href]')?.href || norm(row.textContent).slice(0, 300);
 
   function passes(job, b, row) {
-    if (b.onlyTicked) {
-      const box = job.boxPath ? follow(row, job.boxPath) : row.querySelector('input[type=checkbox],[role=checkbox]');
-      if (!box || !(box.checked === true || box.getAttribute('aria-checked') === 'true')) return false;
-    }
     if (b.op === 'any') return true;
-    const cell = follow(row, job.cellPath);
+    if (b.op === 'ticked') {
+      const box = b.checkbox ? inRow(b.checkbox, job, row) : row.querySelector('input[type=checkbox],[role=checkbox]');
+      return Boolean(box) && (box.checked === true || box.getAttribute('aria-checked') === 'true');
+    }
+    const cell = inRow(b.cell, job, row);
     return Boolean(cell) && compare(fieldText(cell), b.op, b.value);
   }
 
@@ -469,31 +460,37 @@
     return document.scrollingElement;
   }
 
-  // The next unhandled row that passes the rule: clicks its target, or for
-  // a web link with "new tab" on, returns the link for the runner to open.
-  // When every row in the list is handled, scrolls down for more; { done }
-  // once scrolling brings no new rows.
-  async function nextRow(b, label, token) {
+  // Makes the next unhandled row that passes the rule the current row. When
+  // every loaded row is handled, scrolls down for more; { done } once
+  // scrolling brings no new rows.
+  async function nextRow(b, label, token, first) {
     aborted = false;
     setBadge(true, label);
     try {
-      const job = await rowJob(b, token);
+      let job = rowJobs.get(token);
+      if (!job) {
+        if (!first) throw new StepError('The list is gone: the page changed while the last row was handled.');
+        const picked = await waitFor(b.row, b.timeout);
+        const sample = findRow(picked);
+        if (!sample) throw new StepError('Couldn’t find a list of rows around "{sel}". Pick one row of the list.', { sel: b.row });
+        job = { container: sample.parentElement, sample, paths: new Map(), done: new Set(), seen: new WeakSet(), current: null };
+        rowJobs.clear(); // only the current step's job is kept
+        rowJobs.set(token, job);
+      }
+      job.current = null;
       for (let stuck = 0; stuck < 2;) {
         await holdWhilePaused();
         const rows = rowsOf(job);
         for (const row of rows) {
-          const key = rowKey(job, row);
-          if (!key || job.done.has(key) || job.seen.has(row)) continue;
+          const key = rowKey(row);
+          if (job.done.has(key) || job.seen.has(row)) continue;
           job.done.add(key);
           job.seen.add(row);
           if (!passes(job, b, row)) continue;
-          const target = follow(row, job.targetPath);
+          job.current = row;
           row.scrollIntoView({ block: 'center' });
           flash(row);
-          const name = String((target instanceof HTMLInputElement ? row : target).textContent).replace(/\s+/g, ' ').trim().slice(0, 80);
-          const link = linkIn(target);
-          if (b.newTab && link && /^https?:$/.test(link.protocol)) return { ok: true, doc, href: link.href, label: name };
-          clickElement(target);
+          const name = String(row.querySelector('a[href]')?.textContent || row.textContent).replace(/\s+/g, ' ').trim().slice(0, 80);
           return { ok: true, doc, label: name };
         }
         // Everything loaded is handled: scroll past the last row for more.
@@ -504,7 +501,7 @@
         for (let waited = 0; waited < 1200 && !fresh; waited += 100) {
           await sleep(100);
           checkAbort();
-          fresh = rowsOf(job).some((r) => { const k = rowKey(job, r); return k && !job.done.has(k) && !job.seen.has(r); });
+          fresh = rowsOf(job).some((r) => !job.done.has(rowKey(r)) && !job.seen.has(r));
         }
         stuck = fresh ? 0 : stuck + 1;
       }
@@ -514,16 +511,36 @@
     }
   }
 
+  // Steps inside a row loop carry the loop's token: their selectors are then
+  // found in the current row only.
+  function enterRow(b) {
+    if (!b.rowJob) return;
+    const job = rowJobs.get(b.rowJob);
+    if (!job?.current?.isConnected) throw new StepError('The list is gone: the page changed while the last row was handled.');
+    scope = job;
+  }
+
   async function run(b, label) {
     aborted = false;
     setBadge(true, label);
     const t0 = Date.now();
     try {
+      enterRow(b);
       switch (b.type) {
-        case 'click':
-          // Like a person, wait until the element is actually visible.
-          clickElement(await waitFor(b.selector, b.timeout, { visible: true, fallbackText: b.fallbackText }), b.button);
+        case 'click': {
+          // Like a person, wait until the element is actually visible. In a
+          // row, the text backup could match another row, so it's not used.
+          const el = await waitFor(b.selector, b.timeout, { visible: true, fallbackText: scope ? '' : b.fallbackText });
+          // A web link in a row opens in a background tab (by the runner),
+          // so the list stays for the next row.
+          const link = scope && b.button === 'left' ? el.closest('a[href]') : null;
+          if (link && /^https?:$/.test(link.protocol)) {
+            flash(el);
+            return { ok: true, doc, ms: Date.now() - t0, href: link.href };
+          }
+          clickElement(el, b.button);
           break;
+        }
         case 'type':
           typeInto(await waitFor(b.selector, b.timeout, { visible: true }), b.text, b.clear);
           break;
@@ -542,6 +559,8 @@
       return { ok: true, doc, ms: Date.now() - t0 };
     } catch (e) {
       return { ok: false, doc, error: errorOf(e) };
+    } finally {
+      scope = null;
     }
   }
 

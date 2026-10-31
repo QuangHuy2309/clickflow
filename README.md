@@ -7,9 +7,9 @@ A Chrome extension for automating repetitive clicks and typing on web pages. You
 ## Features
 
 - **Record** clicks (left, right, double), typing, dropdown choices, and scrolls (page or one section) as steps. Password and payment fields are never recorded.
-- **Steps as blocks:** Click, Type text, Select / find in list, Wait, Scroll, Screenshot, For each row. Drag, duplicate, disable, or delete them.
+- **Steps as blocks:** Click, Type text, Select / find in list, Wait, Scroll, Screenshot, For each row. Drag them anywhere (also into and out of a row loop), move them with ↑/↓, duplicate, disable, or delete them.
 - **Then wait** on any step: pause 1 s to 59 min before the next step, with a live countdown.
-- **For each row:** in a list or table, click the same thing (e.g. the name link) in every row whose cell passes a rule (equals, greater than, contains…) or whose checkbox is ticked. Links open in background tabs, and ClickFlow scrolls to load more rows.
+- **For each row:** pick one row of a list, set a rule (every row, ticked rows, or a cell that equals / is greater than / contains a value), and put steps inside. They run in each matching row, using elements picked in any row. Links clicked in a row open in background tabs, and ClickFlow scrolls to load more rows.
 - **Data sets:** a named list of values per field. Run *n* uses value *n*, and ClickFlow counts the runs for you, or you set a fixed number.
 - **Survives page changes:** stable selectors from the element picker, text fallback for clicks, waits for visible elements, retries.
 - **Live log** with each step's values, timing, errors, and screenshots. Drag its top edge to resize it.
