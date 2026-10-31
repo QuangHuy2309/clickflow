@@ -20,6 +20,11 @@ ClickFlow has no content scripts that run on every page, and its service worker 
 - **Steps are data, not code.** Each step is sent to the page as a plain JSON object through `chrome.scripting.executeScript({ func, args })`. The only code that runs is the code bundled in `src/content/`.
 - **No HTML injection.** The UI is built with `createElement` and `textContent`, never `innerHTML`. Plan names, selectors, and text are always displayed as plain text.
 - **Imported plans are untrusted.** Imports are limited to 1 MB and validated against a strict schema (`src/shared/schema.js`): unknown step types and keys are dropped, strings are length-limited, and numbers are clamped. A preview is shown before anything is saved.
+- **The recorder is limited.**
+  - It's injected only after you press Record, and only into that tab. It's re-injected after page loads in that tab and removed when you press Stop.
+  - It records only real user input (`event.isTrusted`), so scripts on the page can't add steps.
+  - It never records the contents of password fields, or of fields marked as payment, one-time-code, or password autocomplete. Those steps are saved with an empty value and a note.
+  - The panel accepts recorded steps only from the recording tab and only with the current session ID. Each step goes through the same schema sanitizer as an import.
 - **Bounded execution.** A run can have at most 10,000 iterations and 200 steps, and every wait has a timeout. Stop, Pause, and Esc on the page all work while a run is in progress.
 - **One target tab.** A run is locked to the tab it started in.
 - **Restricted pages.** ClickFlow refuses to run on `chrome://` pages, other internal browser pages, and the Chrome Web Store. It runs on local `file://` pages only if you enable that yourself.

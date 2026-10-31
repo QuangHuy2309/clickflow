@@ -30,7 +30,7 @@ export const BLOCK_TYPES = {
     label: 'Type text',
     fields: [
       selector('selector', 'Input field', { required: true }),
-      textarea('text', 'Text', '{{value}}', { hint: '{{value}} = current data row, {{index}} = run number' }),
+      textarea('text', 'Text', '{{value}}', { variable: true, hint: '{{value}} = current data row, {{index}} = run number' }),
       bool('clear', 'Clear the field first', true),
       bool('enter', 'Press Enter after typing', false),
       timeout(),
@@ -41,7 +41,7 @@ export const BLOCK_TYPES = {
     fields: [
       selector('selector', 'Dropdown or scrollable list', { required: true }),
       selector('opener', 'Click this first to open the list (optional)'),
-      text('match', 'Value to find', '{{value}}', { required: true }),
+      text('match', 'Value to find', '{{value}}', { required: true, variable: true }),
       choice('matchMode', 'Match', [
         { value: 'exact', label: 'Exact text' },
         { value: 'contains', label: 'Contains text' },

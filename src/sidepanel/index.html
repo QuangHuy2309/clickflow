@@ -10,8 +10,11 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <img src="../../icons/icon32.png" alt="" width="22" height="22">
-      <span>ClickFlow</span>
+      <img src="../../icons/icon48.png" alt="" width="30" height="30">
+      <div class="brand-text">
+        <span class="brand-name">ClickFlow</span>
+        <span class="brand-sub">Click &amp; type automation</span>
+      </div>
     </div>
     <div class="plan-switch">
       <label class="sr-only" for="planSelect">Current plan</label>
@@ -33,71 +36,83 @@
     </div>
   </header>
 
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-steps" aria-controls="panel-steps" aria-selected="true">Steps <span id="stepCount" class="count"></span></button>
+    <button role="tab" id="tab-data" aria-controls="panel-data" aria-selected="false">Data <span id="runCount" class="count"></span></button>
+    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Settings</button>
+  </nav>
+
   <div id="siteBanner" class="banner" hidden></div>
 
   <main id="main">
-    <section class="card" aria-labelledby="stepsTitle">
-      <div class="section-head">
-        <h2 id="stepsTitle">Steps</h2>
-        <span id="stepCount" class="pill"></span>
-      </div>
+    <section id="panel-steps" role="tabpanel" aria-labelledby="tab-steps">
       <div id="emptyState" class="empty" hidden>
-        <div class="empty-art" aria-hidden="true"></div>
-        <p><strong>No steps yet</strong></p>
-        <p class="muted">Build your automation one block at a time, like clicking a button, typing text, or picking from a list.</p>
+        <div class="empty-art" aria-hidden="true">
+          <span class="ea-card ea-1"></span><span class="ea-card ea-2"></span><span class="ea-card ea-3"></span>
+          <span class="ea-dot"></span>
+        </div>
+        <h2>Record your first flow</h2>
+        <p class="muted">Press record and use the page as usual. Every click, text entry and selection becomes a step you can replay.</p>
+        <button id="emptyRecordBtn" class="btn btn-record btn-lg"></button>
+        <button id="emptyAddBtn" class="link-btn">or add steps manually</button>
       </div>
-      <ol id="blockList" class="blocks" aria-label="Steps"></ol>
-      <div class="menu-wrap add-wrap">
+      <ol id="blockList" class="timeline" aria-label="Steps"></ol>
+      <div class="menu-wrap add-wrap" id="addWrap">
         <button id="addBtn" class="btn btn-add" aria-haspopup="menu" aria-expanded="false"></button>
         <div id="addMenu" class="menu add-menu" role="menu" hidden></div>
       </div>
     </section>
 
-    <section class="card" aria-labelledby="dataTitle">
-      <div class="section-head">
-        <h2 id="dataTitle">Data list</h2>
-        <span id="runCount" class="pill pill-accent"></span>
+    <section id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
+      <div class="card">
+        <div class="section-head">
+          <h2>Data list</h2>
+          <span id="runSummary" class="pill pill-accent"></span>
+        </div>
+        <p class="muted small">Each item is one run. Put <code>{{value}}</code> in a step, or press <span class="kbd">{{ }}</span> on a recorded field, to insert it.</p>
+        <div class="segmented" role="radiogroup" aria-label="Split items by" id="splitMode">
+          <button role="radio" data-value="auto">Auto</button>
+          <button role="radio" data-value="lines">One per line</button>
+          <button role="radio" data-value="comma">Comma</button>
+        </div>
+        <label class="sr-only" for="dataInput">Data list</label>
+        <textarea id="dataInput" rows="7" spellcheck="false" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com"></textarea>
+        <div id="dataPreview" class="chips" aria-label="Parsed items"></div>
+        <p class="hint"><span id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
       </div>
-      <p class="muted small">Each item is one run. Use <code>{{value}}</code> in any step to insert it.</p>
-      <div class="segmented" role="radiogroup" aria-label="Split items by" id="splitMode">
-        <button role="radio" data-value="auto">Auto</button>
-        <button role="radio" data-value="lines">One per line</button>
-        <button role="radio" data-value="comma">Comma</button>
-      </div>
-      <label class="sr-only" for="dataInput">Data list</label>
-      <textarea id="dataInput" rows="5" spellcheck="false" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com"></textarea>
-      <p class="hint"><span class="hint-icon" id="privacyIcon"></span>Stored only on this device, unencrypted. Don't put passwords here.</p>
     </section>
 
-    <details class="card settings">
-      <summary><h2>Run settings</h2></summary>
-      <div class="grid">
-        <div class="field">
-          <label for="stepDelay">Delay between steps (ms)</label>
-          <input id="stepDelay" type="number" min="0" max="60000" step="50">
-        </div>
-        <div class="field">
-          <label for="runDelay">Delay between runs (ms)</label>
-          <input id="runDelay" type="number" min="0" max="600000" step="100">
-        </div>
-        <div class="field">
-          <label for="repeat">Repeat (when the data list is empty)</label>
-          <input id="repeat" type="number" min="1" max="10000">
-        </div>
-        <div class="field">
-          <label for="onError">If a step fails</label>
-          <select id="onError">
-            <option value="stop">Stop everything</option>
-            <option value="skip">Skip to the next run</option>
-          </select>
+    <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="card">
+        <div class="section-head"><h2>Run settings</h2></div>
+        <div class="grid">
+          <div class="field">
+            <label for="stepDelay">Delay between steps (ms)</label>
+            <input id="stepDelay" type="number" min="0" max="60000" step="50">
+          </div>
+          <div class="field">
+            <label for="runDelay">Delay between runs (ms)</label>
+            <input id="runDelay" type="number" min="0" max="600000" step="100">
+          </div>
+          <div class="field">
+            <label for="repeat">Repeat when there's no data</label>
+            <input id="repeat" type="number" min="1" max="10000">
+          </div>
+          <div class="field">
+            <label for="onError">If a step fails</label>
+            <select id="onError">
+              <option value="stop">Stop everything</option>
+              <option value="skip">Skip to the next run</option>
+            </select>
+          </div>
         </div>
       </div>
-    </details>
+    </section>
   </main>
 
-  <footer class="runbar">
+  <footer class="dock">
     <div class="progress" aria-hidden="true"><div id="progressFill"></div></div>
-    <div class="runbar-row">
+    <div class="dock-row">
       <div class="run-info">
         <span id="runStatus" class="run-status" aria-live="polite">Ready</span>
         <span id="siteChip" class="site-chip" hidden></span>
@@ -105,6 +120,7 @@
       <div class="run-buttons">
         <button id="pauseBtn" class="btn btn-ghost" hidden></button>
         <button id="stopBtn" class="btn btn-danger" hidden></button>
+        <button id="recordBtn" class="btn btn-record"></button>
         <button id="runBtn" class="btn btn-primary"></button>
       </div>
     </div>

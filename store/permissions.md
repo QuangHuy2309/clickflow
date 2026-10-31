@@ -9,13 +9,13 @@ Shows ClickFlow's plan editor and run controls in Chrome's side panel, so it sta
 Saves the user's automation plans (steps, selectors, data list, settings) locally on their device with chrome.storage.local. Nothing is synced or sent anywhere.
 
 **scripting**
-When the user presses Run or Pick, ClickFlow injects its own bundled script into the active tab to carry out the user's steps (click, type, select, scroll, wait) or to let them pick an element. No remote code is ever run.
+When the user presses Record, Run, or Pick, ClickFlow injects its own bundled script into the active tab. Depending on the button, the script records the user's clicks and typing as steps (password and payment fields are excluded), carries out the user's steps (click, type, select, scroll, wait), or lets them pick an element. No remote code is ever run.
 
 **activeTab**
 Gives ClickFlow temporary access to the current tab when the user clicks the toolbar icon, so it can identify the page and ask for site access.
 
 **Host permissions (optional_host_permissions: <all_urls>)**
-These are optional and never granted at install. The extension calls chrome.permissions.request for a single site (for example https://example.com/*) only when the user chooses to run a plan or pick an element on that site. The user can automate any site they choose, so the specific sites can't be known in advance.
+These are optional and never granted at install. The extension calls chrome.permissions.request for a single site (for example https://example.com/*) only when the user chooses to record, run a plan, or pick an element on that site. The user can automate any site they choose, so the specific sites can't be known in advance.
 
 ## Remote code
 No, I am not using remote code. All JavaScript is included in the package.

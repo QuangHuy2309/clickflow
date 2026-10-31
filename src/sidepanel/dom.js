@@ -34,6 +34,7 @@ const ICONS = {
   play: 'M7 5l12 7-12 7z',
   pause: 'M8 5v14 M16 5v14',
   stop: 'M6 6h12v12H6z',
+  record: 'M18 12a6 6 0 1 1-12 0 6 6 0 0 1 12 0z',
   target: 'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z M12 2v4 M12 18v4 M2 12h4 M18 12h4',
   more: 'M5 12h.01 M12 12h.01 M19 12h.01',
   shield: 'M12 3l8 3v6c0 4.5-3.5 8-8 9-4.5-1-8-4.5-8-9V6z',

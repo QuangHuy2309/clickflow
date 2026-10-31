@@ -16,7 +16,10 @@ English
 
 Tired of filling in the same form fifty times? ClickFlow turns repetitive clicking and typing into a plan you can run with one click.
 
-BUILD A PLAN FROM SIMPLE STEPS
+RECORD IT ONCE, REPLAY IT MANY TIMES
+Press Record and use the page as you normally would. ClickFlow turns every click, text entry, and dropdown choice into a step. Password and payment fields are never recorded.
+
+OR BUILD A PLAN FROM SIMPLE STEPS
 • Click: buttons, links, or any element
 • Type text: into inputs, text areas, and editable fields
 • Select / find in list: pick an option from a dropdown, or scroll a long list until it finds your value
@@ -26,7 +29,7 @@ BUILD A PLAN FROM SIMPLE STEPS
 Drag steps to reorder them, duplicate or disable them, and delete what you don't need.
 
 RUN IT FOR EVERY ITEM IN A LIST
-Paste a list of values, one per line or separated by commas, and ClickFlow runs your plan once for each item. Put {{value}} in any step to insert the current item.
+Paste a list of values, one per line or separated by commas, and ClickFlow runs your plan once for each item. One click turns a recorded value into {{value}}.
 
 POINT AND CLICK, NO CODE NEEDED
 Click "Pick" and then click any element on the page. ClickFlow works out a reliable selector for you.
@@ -51,11 +54,7 @@ ClickFlow automates repetitive clicks and typing on web pages, using step plans 
 ## Assets
 - Icon: `icons/icon128.png`
 - Small promo tile (440×280): `store/promo-small-440x280.png`
-- Screenshots (1280×800 or 640×400): capture the side panel next to `test/playground.html`:
-  1. A plan with 4 steps and a data list
-  2. A run in progress (highlighted step, progress bar, page badge)
-  3. The element picker highlighting a button
-  4. The "Add step" menu showing all step types
+- Screenshots (1280×800): `store/screenshot-1-record.png`, `store/screenshot-2-run.png`, `store/screenshot-3-picker.png` (regenerate them with `npm run e2e`)
 
 ## Privacy policy URL
 https://github.com/QuangHuy2309/clickflow/blob/master/PRIVACY.md

@@ -6,6 +6,8 @@ A Chrome extension for automating repetitive clicks and typing on web pages. You
 
 ## Features
 
+- **Record instead of building by hand.** Press **Record** and use the page as you normally would. Each click, text entry, and dropdown choice appears as a step. Clicks on items in scrollable lists become "find in list" steps, so they keep working when the list moves or loads more items. Typing into the same field is combined into a single step. Password and payment fields are never recorded.
+- **One-click variables.** On a recorded text field, press `{{ }}` to swap the recorded value for `{{value}}`. The original value moves into the data list.
 - **Steps you can rearrange.** Each step is a block: Click, Type text, Select / find in list, Wait, or Scroll. You can drag blocks to reorder them, move them with the arrow buttons or the keyboard (focus the handle, then press ↑/↓), and duplicate, disable, or delete them.
 - **Data-driven runs.** Paste a list (one item per line, or separated by commas) and the plan runs once per item. Use `{{value}}` in any step to insert the current item, and `{{index}}` for the run number.
 - **Element picker.** Click **Pick**, then click any element on the page. ClickFlow fills in a stable CSS selector for it.
@@ -26,7 +28,11 @@ A Chrome extension for automating repetitive clicks and typing on web pages. You
 npm run playground   # serves test/playground.html on http://localhost:5500
 ```
 
-Open `http://localhost:5500/playground.html` and click the ClickFlow icon. Allow access to `localhost`, then build this plan:
+Open `http://localhost:5500/playground.html`, click the ClickFlow icon, and allow access to `localhost`.
+
+**Quickest way:** press **Record**. Type a name, choose a country, open the city list and pick a city, then click Submit. Press **Stop**. Open the *Type text* step and press `{{ }}`, then add more names in the **Data** tab and press **Run**.
+
+**Or build the plan by hand:**
 
 | # | Step | Settings |
 |---|------|----------|
@@ -54,6 +60,8 @@ src/sidepanel/           UI (index.html, panel.css, panel.js), runner, storage, 
 src/shared/              plan schema + sanitizer, data-list parsing and templating
 src/content/actions.js   step executor, injected only while a plan runs
 src/content/picker.js    element picker, injected only when you click Pick
+src/content/recorder.js  action recorder, injected only while you record
+src/content/selector.js  shared stable-selector builder
 test/                    unit tests and the playground page
 store/                   Chrome Web Store listing text, permission justifications, images
 ```
