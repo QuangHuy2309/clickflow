@@ -50,6 +50,8 @@ npm run icons       # regenerate icons/ and the store promo tile
 ./scripts/package.ps1   # or scripts/package.sh: builds dist/clickflow-<version>.zip
 ```
 
+Publishing to the Chrome Web Store from GitHub (tag `vX.Y.Z` or run the workflow by hand): see [store/publish-from-github.md](store/publish-from-github.md).
+
 ### Project layout
 
 ```
