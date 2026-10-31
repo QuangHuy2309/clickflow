@@ -833,3 +833,6 @@ button.uses-set:hover { border-style: solid; border-color: var(--accent); backgr
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.about p { margin: 0 0 4px; }
+.about a { color: var(--accent); }

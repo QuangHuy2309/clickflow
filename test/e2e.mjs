@@ -213,6 +213,12 @@ try {
   await panel.locator('#runDelay').dispatchEvent('change');
   await panel.screenshot({ path: join(out, 'panel-settings.png') });
   ok('runs: automatic = shortest data set (2); fixed number via quick buttons');
+  await panel.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+  await panel.locator('.about').scrollIntoViewIfNeeded();
+  assert.match(await panel.textContent('#appVersion'), /^v\d+\.\d+\.\d+$/);
+  assert.equal(await panel.getAttribute('.about a', 'href'), 'mailto:lqhuy2309@gmail.com');
+  await panel.screenshot({ path: join(out, 'panel-about.png') });
+  ok('settings: About card shows the version and the author email');
   await panel.click('#tab-steps');
 
   // ---- Run 3 times (fixed): each text box takes the next value from its own
