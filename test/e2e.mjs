@@ -217,8 +217,13 @@ try {
   await panel.locator('.about').scrollIntoViewIfNeeded();
   assert.match(await panel.textContent('#appVersion'), /^v\d+\.\d+\.\d+$/);
   assert.equal(await panel.getAttribute('.about a', 'href'), 'mailto:lqhuy2309@gmail.com');
+  assert.equal(await panel.isVisible('.coffee img'), false, 'QR hidden until opened');
+  await panel.click('.coffee summary');
+  await panel.locator('.coffee img').scrollIntoViewIfNeeded();
+  assert.ok(await panel.$eval('.coffee img', (img) => img.complete && img.naturalWidth > 0), 'QR image loads');
   await panel.screenshot({ path: join(out, 'panel-about.png') });
-  ok('settings: About card shows the version and the author email');
+  await panel.click('.coffee summary');
+  ok('settings: About card shows the version, author email, and the coffee QR');
   await panel.click('#tab-steps');
 
   // ---- Run 3 times (fixed): each text box takes the next value from its own
