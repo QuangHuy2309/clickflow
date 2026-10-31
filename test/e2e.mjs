@@ -819,6 +819,10 @@ try {
     assert.ok(r.log.some((l) => /S1\.2.*Opened in a new tab/.test(l)), 'inner steps are logged as S1.n');
     assert.ok(r.log.some((l) => /4 rows handled/.test(l)));
     ok('for each row: 2 steps in every row with score > 0 (incl. rows loaded by scrolling):', r.ticked);
+    await site.evaluate(() => { document.getElementById('list').scrollTop = 0; });
+    await site.screenshot({ path: join(out, 'site-rows.png') });
+    await panel.evaluate(() => { document.getElementById('main').scrollTop = 0; });
+    await panel.screenshot({ path: join(out, 'panel-rows.png') });
 
     // Rows that are ticked (on the page beforehand).
     r = await rowsRun(loop({ op: 'ticked' }, [{ type: 'click', selector: '#r1 a' }]), 2,
@@ -848,6 +852,13 @@ try {
 
   // ---- Language: English ⇄ Vietnamese, remembered.
   {
+    // A clean row-loop plan for the Vietnamese store screenshot.
+    await importPlan({ name: 'Bạn bè có điểm', blocks: [{ type: 'rows', row: '#r1', op: 'gt', cell: '#r1 .c3', value: '0', steps: [
+      { type: 'click', selector: '#r1 input', collapsed: true },
+      { type: 'click', selector: '#r1 a', waitAfter: 2, waitUnit: 's', collapsed: true },
+    ] }] });
+    await panel.click('#logClear');
+    await panel.click('#logClose');
     await panel.click('#tab-settings');
     await panel.click('#langSelect [data-value="vi"]');
     assert.match(await panel.textContent('#tab-steps'), /^Các bước/);
@@ -856,6 +867,7 @@ try {
     await panel.click('#tab-steps');
     assert.match(await cards.nth(0).locator('.block-title strong').first().textContent(), /^Với mỗi hàng$/);
     assert.match(await cards.nth(0).locator('.wait-after label').first().textContent(), /^Sau đó chờ$/);
+    await panel.evaluate(() => { document.getElementById('toasts').replaceChildren(); document.getElementById('main').scrollTop = 0; });
     await panel.screenshot({ path: join(out, 'panel-vi.png') });
     await panel.reload();
     await panel.waitForSelector('#runBtn svg');
@@ -884,6 +896,8 @@ try {
     ['store/screenshot-1-record.png', 'site-recording.png', 'panel-recording.png'],
     ['store/screenshot-2-run.png', 'playground-after.png', 'panel-done.png'],
     ['store/screenshot-3-picker.png', 'picker.png', 'panel-data.png'],
+    ['store/screenshot-4-rows.png', 'site-rows.png', 'panel-rows.png'],
+    ['store/screenshot-5-vietnamese.png', 'site-rows.png', 'panel-vi.png'],
   ];
   const composer = await context.newPage();
   await composer.setViewportSize({ width: 1280, height: 800 });

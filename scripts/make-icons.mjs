@@ -25,16 +25,22 @@ function chunk(type, data) {
   crc.writeUInt32BE(crc32(body));
   return Buffer.concat([len, body, crc]);
 }
-function png(width, height, rgba) {
-  const raw = Buffer.alloc((width * 4 + 1) * height);
+// alpha: false writes 24-bit RGB (the Web Store requires it for promo
+// images); the pixels must already be opaque.
+function png(width, height, rgba, { alpha = true } = {}) {
+  const bpp = alpha ? 4 : 3;
+  const raw = Buffer.alloc((width * bpp + 1) * height);
   for (let y = 0; y < height; y++) {
-    raw[y * (width * 4 + 1)] = 0;
-    rgba.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+    const row = y * (width * bpp + 1);
+    raw[row] = 0;
+    for (let x = 0; x < width; x++) {
+      for (let c = 0; c < bpp; c++) raw[row + 1 + x * bpp + c] = rgba[(y * width + x) * 4 + c];
+    }
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  ihdr[8] = 8; ihdr[9] = alpha ? 6 : 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
@@ -111,10 +117,12 @@ const TW = 440, TH = 280;
 const CHIP_COLORS = [[91, 91, 240], [14, 159, 157], [217, 119, 6], [139, 92, 246]];
 writeFileSync(join(root, 'store', 'promo-small-440x280.png'), png(TW, TH, render(TW, TH, (u, v) => {
   const x = u * TW, y = v * TH;
+  const bg = mix([30, 27, 75], [76, 29, 149], (u * 0.7 + v * 0.3));
   const iconBox = { x: 40, y: 76, s: 128 };
   if (x >= iconBox.x && x < iconBox.x + iconBox.s && y >= iconBox.y && y < iconBox.y + iconBox.s) {
     const c = iconSample((x - iconBox.x) / iconBox.s, (y - iconBox.y) / iconBox.s);
-    if (c) return c;
+    // The icon's soft edges are blended into the background: no alpha.
+    if (c) return [...mix(bg, c.slice(0, 3), (c[3] ?? 255) / 255), 255];
   }
   for (let i = 0; i < 4; i++) {
     const cy = 62 + i * 42;
@@ -124,7 +132,7 @@ writeFileSync(join(root, 'store', 'promo-small-440x280.png'), png(TW, TH, render
       return [255, 255, 255, 255];
     }
   }
-  return [...mix([30, 27, 75], [76, 29, 149], (u * 0.7 + v * 0.3)), 255];
-}, 2)));
+  return [...bg, 255];
+}, 2), { alpha: false }));
 
 console.log('Icons written to icons/, promo tile to store/');
