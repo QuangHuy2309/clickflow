@@ -854,26 +854,32 @@ function bindLogResize() {
     const saved = Number(localStorage.getItem(LOG_HEIGHT_KEY));
     if (saved) setLogHeight(saved, false);
   } catch { /* storage off */ }
-  grip.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+  // The log and the steps share the space: dragging the divider (or the
+  // log's header) up grows the log and shortens the steps area above it.
+  const keepRunningStepInView = () => document.querySelector('#blockList .is-running')?.scrollIntoView({ block: 'nearest' });
+  const startDrag = (el) => (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
     e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
+    el.setPointerCapture(e.pointerId);
     const startY = e.clientY;
     const startH = panel.getBoundingClientRect().height;
     panel.classList.add('resizing');
-    const move = (ev) => setLogHeight(startH + (startY - ev.clientY), false);
+    const move = (ev) => { setLogHeight(startH + (startY - ev.clientY), false); keepRunningStepInView(); };
     const up = (ev) => {
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      grip.removeEventListener('pointercancel', up);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
       panel.classList.remove('resizing');
       setLogHeight(startH + (startY - ev.clientY));
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-    grip.addEventListener('pointercancel', up);
-  });
-  grip.addEventListener('dblclick', () => setLogHeight(null));
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  };
+  const head = panel.querySelector('.log-head');
+  grip.addEventListener('pointerdown', startDrag(grip));
+  head.addEventListener('pointerdown', startDrag(head));
+  for (const el of [grip, head]) el.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) setLogHeight(null); });
   grip.addEventListener('keydown', (e) => {
     const step = e.key === 'ArrowUp' ? 24 : e.key === 'ArrowDown' ? -24 : 0;
     if (!step) return;

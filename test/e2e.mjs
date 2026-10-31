@@ -624,24 +624,38 @@ try {
   assert.ok(slowMs < 4000, `didn't wait for the 10 s image (took ${slowMs} ms)`);
   ok(`next step ran ${slowMs} ms after a page whose load takes 10 s`);
 
-  // ---- The log can be resized from its top edge; double-click resets.
+  // ---- The log is docked under the steps: dragging its divider (or header)
+  // up grows it and shortens the steps area by the same amount.
   {
-    const panelBox = () => panel.locator('#logPanel').boundingBox();
-    const before = await panelBox();
-    const grip = await panel.locator('#logResize').boundingBox();
-    await panel.mouse.move(grip.x + grip.width / 2, grip.y + 4);
-    await panel.mouse.down();
-    await panel.mouse.move(grip.x + grip.width / 2, grip.y - 150, { steps: 6 });
-    await panel.mouse.up();
-    const after = await panelBox();
-    assert.ok(Math.abs(after.height - before.height - 150) < 6, `log grew by 150 px (${before.height} → ${after.height})`);
+    const box = (sel) => panel.locator(sel).boundingBox();
+    const drag = async (sel, dy) => {
+      const b = await box(sel);
+      const x = b.x + b.width / 3;
+      const y = b.y + Math.min(5, b.height / 2);
+      await panel.mouse.move(x, y);
+      await panel.mouse.down();
+      await panel.mouse.move(x, y + dy, { steps: 6 });
+      await panel.mouse.up();
+    };
+    const before = await box('#logPanel');
+    const mainBefore = await box('main');
+    assert.ok(Math.abs(mainBefore.y + mainBefore.height - before.y) < 2, 'steps area ends where the log begins');
+    await drag('#logResize', -150);
+    const after = await box('#logPanel');
+    const mainAfter = await box('main');
+    assert.ok(Math.abs(after.height - before.height - 150) < 4, `log grew by 150 px (${before.height} → ${after.height})`);
+    assert.ok(Math.abs(mainBefore.height - mainAfter.height - 150) < 4, `steps area shrank by 150 px (${mainBefore.height} → ${mainAfter.height})`);
+    assert.ok(Math.abs(mainAfter.y + mainAfter.height - after.y) < 2, 'still touching after the drag');
+    await panel.screenshot({ path: join(out, 'panel-log-docked.png') });
     assert.equal(await panel.evaluate(() => localStorage.getItem('clickflow.logHeight')), String(Math.round(after.height)), 'height remembered');
+    await drag('.log-head strong', 80);
+    assert.ok(Math.abs((await box('#logPanel')).height - (after.height - 80)) < 4, 'dragging the header works too');
     await panel.focus('#logResize');
-    await panel.keyboard.press('ArrowDown');
-    assert.ok((await panelBox()).height < after.height, 'keyboard shrinks it');
+    await panel.keyboard.press('ArrowUp');
+    assert.ok(Math.abs((await box('#logPanel')).height - (after.height - 80 + 24)) < 4, 'keyboard resizes it');
     await panel.dblclick('#logResize');
-    assert.equal(Math.round((await panelBox()).height), Math.round(before.height), 'double-click resets');
-    ok('log resized by drag and keyboard, remembered, reset by double-click');
+    assert.equal(Math.round((await box('#logPanel')).height), Math.round(before.height), 'double-click resets');
+    ok('log docked under the steps: divider/header drag and keyboard resize both, remembered, double-click resets');
   }
 
   // ---- Restricted pages are refused. Without the "tabs" permission Chrome

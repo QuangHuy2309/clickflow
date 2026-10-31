@@ -46,3 +46,9 @@ Regression tests are in `test/e2e.mjs`:
 
 - Measure Stop from the moment the run is actually underway. Clicking a button that isn't visible yet makes Playwright wait, and that wait got counted as Stop latency.
 - A new test that fails right away is the point. The slow-page test caught a second bug: a non-navigating step waiting on a `loading` tab.
+
+## The log looked detached from the steps (follow-up)
+
+- **Symptom:** with the log open, resizing it didn't visibly shorten the steps. The log was a floating card with margins and a shadow, and there was empty space between the steps and the log.
+- **Fix (`panel.css`, `panel.js`):** the log is docked as a split view: full width, a divider on its top edge, a default height of 38vh, and `flex: none` under `main` (which is `flex: 1`). It can be dragged from the divider or the header, the running step stays in view while dragging, and double-clicking resets the size.
+- **Guard:** e2e checks that the steps area ends where the log begins, and that it shrinks by exactly the amount the log grows.
